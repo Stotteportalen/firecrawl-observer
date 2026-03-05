@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+
+# Next.js build output
+.next
+
+# Testing
+coverage
+__tests__
+
+# Development
+.env*.local
+.vscode
+.cursor
+.claude
+
+# Git
+.git
+.gitignore
+
+# IDE
+*.swp
+*.swo
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Misc
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Generated Prisma client (regenerated during build)
+.generated
