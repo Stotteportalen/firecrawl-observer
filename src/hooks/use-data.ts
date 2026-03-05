@@ -440,6 +440,10 @@ export function useTriggerExtraction(id: string) {
   return useSWRMutation(`/api/data/grants/schemes/${id}/extract`, postFetcher);
 }
 
+export function useBulkExtraction() {
+  return useSWRMutation('/api/data/grants/schemes/bulk-extract', postFetcher);
+}
+
 // ─── Grant Changes ───────────────────────────────────────────
 
 export function useGrantChanges(schemeId: string | null) {

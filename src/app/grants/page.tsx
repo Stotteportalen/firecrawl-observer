@@ -9,9 +9,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Loader2, Search, ExternalLink, Calendar, Building2, FileText, ArrowUpDown } from 'lucide-react'
+import { Loader2, Search, ExternalLink, Calendar, Building2, FileText, ArrowUpDown, RefreshCw, X } from 'lucide-react'
 import { useSession } from '@/lib/auth-client'
-import { useGrantSchemes, useGrantProviders } from '@/hooks/use-data'
+import { useGrantSchemes, useGrantProviders, useBulkExtraction } from '@/hooks/use-data'
+import { useToast } from '@/hooks/use-toast'
+import { mutate } from 'swr'
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-800',
@@ -33,6 +35,10 @@ export default function GrantsDashboard() {
   const [fundingTypeFilter, setFundingTypeFilter] = useState('')
   const [providerFilter, setProviderFilter] = useState('')
   const [sortBy, setSortBy] = useState('updatedAt')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const { addToast } = useToast()
+  const { trigger: bulkExtract, isMutating: isExtracting } = useBulkExtraction()
 
   const filters: Record<string, string> = {}
   if (statusFilter) filters.status = statusFilter
@@ -43,6 +49,45 @@ export default function GrantsDashboard() {
 
   const { data: schemes, isLoading } = useGrantSchemes(filters)
   const { data: providers } = useGrantProviders()
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (!schemes) return
+    if (selectedIds.size === schemes.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(schemes.map(s => s.id)))
+    }
+  }
+
+  const handleBulkExtract = async () => {
+    if (selectedIds.size === 0) return
+    try {
+      const result = await bulkExtract({ ids: Array.from(selectedIds) })
+      const succeeded = result.results.filter((r: { success: boolean }) => r.success).length
+      const failed = result.results.filter((r: { success: boolean }) => !r.success).length
+      if (failed === 0) {
+        addToast({ title: `Re-extracted ${succeeded} grant${succeeded !== 1 ? 's' : ''} successfully` })
+      } else {
+        addToast({
+          title: `${succeeded} succeeded, ${failed} failed`,
+          variant: succeeded > 0 ? 'warning' : 'error',
+        })
+      }
+      setSelectedIds(new Set())
+      mutate((key: string) => typeof key === 'string' && key.startsWith('/api/data/grants/schemes'))
+    } catch (err) {
+      addToast({ title: (err as Error).message, variant: 'error' })
+    }
+  }
 
   if (!session) {
     return (
@@ -58,6 +103,7 @@ export default function GrantsDashboard() {
   const activeCount = schemes?.filter(s => s.status === 'active').length || 0
   const totalCount = schemes?.length || 0
   const upcomingDeadlines = schemes?.filter(s => s.applicationDeadline && new Date(s.applicationDeadline) > new Date()).length || 0
+  const allSelected = schemes && schemes.length > 0 && selectedIds.size === schemes.length
 
   return (
     <Layout>
@@ -115,7 +161,21 @@ export default function GrantsDashboard() {
           </div>
 
           {/* Filters */}
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3 items-center">
+            {schemes && schemes.length > 0 && (
+              <label
+                className="flex items-center gap-2 cursor-pointer select-none text-sm text-zinc-600"
+                onClick={e => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!allSelected}
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                />
+                Select all
+              </label>
+            )}
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
               <Input
@@ -177,46 +237,88 @@ export default function GrantsDashboard() {
           ) : (
             <div className="space-y-3">
               {schemes.map(scheme => (
-                <Link key={scheme.id} href={`/grants/schemes/${scheme.id}`}>
-                  <Card className="hover:border-zinc-300 transition-colors cursor-pointer">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="font-semibold text-zinc-900 truncate">{scheme.name}</h3>
-                            <Badge className={STATUS_COLORS[scheme.status] || STATUS_COLORS.unknown}>
-                              {scheme.status}
-                            </Badge>
-                            {scheme.fundingType && (
-                              <Badge variant="outline" className="text-xs">
-                                {FUNDING_TYPE_LABELS[scheme.fundingType] || scheme.fundingType}
+                <div key={scheme.id} className="flex items-start gap-3">
+                  <div
+                    className="pt-4 shrink-0"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(scheme.id)}
+                      onChange={() => toggleSelection(scheme.id)}
+                      className="h-4 w-4 rounded border-zinc-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                    />
+                  </div>
+                  <Link href={`/grants/schemes/${scheme.id}`} className="flex-1 min-w-0">
+                    <Card className="hover:border-zinc-300 transition-colors cursor-pointer">
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h3 className="font-semibold text-zinc-900 truncate">{scheme.name}</h3>
+                              <Badge className={STATUS_COLORS[scheme.status] || STATUS_COLORS.unknown}>
+                                {scheme.status}
                               </Badge>
+                              {scheme.fundingType && (
+                                <Badge variant="outline" className="text-xs">
+                                  {FUNDING_TYPE_LABELS[scheme.fundingType] || scheme.fundingType}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-sm text-zinc-500 mb-1">{scheme.providerName}</div>
+                            {scheme.summary && (
+                              <p className="text-sm text-zinc-600 line-clamp-2">{scheme.summary}</p>
                             )}
                           </div>
-                          <div className="text-sm text-zinc-500 mb-1">{scheme.providerName}</div>
-                          {scheme.summary && (
-                            <p className="text-sm text-zinc-600 line-clamp-2">{scheme.summary}</p>
-                          )}
+                          <div className="flex flex-col items-end gap-1 text-xs text-zinc-400 shrink-0">
+                            {scheme.applicationDeadline ? (
+                              <div className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                {new Date(scheme.applicationDeadline).toLocaleDateString('nb-NO')}
+                              </div>
+                            ) : scheme.isRollingDeadline ? (
+                              <div className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                Løpende
+                              </div>
+                            ) : null}
+                            <ExternalLink className="h-3 w-3" />
+                          </div>
                         </div>
-                        <div className="flex flex-col items-end gap-1 text-xs text-zinc-400 shrink-0">
-                          {scheme.applicationDeadline ? (
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              {new Date(scheme.applicationDeadline).toLocaleDateString('nb-NO')}
-                            </div>
-                          ) : scheme.isRollingDeadline ? (
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              Løpende
-                            </div>
-                          ) : null}
-                          <ExternalLink className="h-3 w-3" />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                </div>
               ))}
+            </div>
+          )}
+
+          {/* Bulk Action Bar */}
+          {selectedIds.size > 0 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-zinc-900 text-white px-5 py-3 rounded-xl shadow-lg">
+              <span className="text-sm font-medium">
+                {selectedIds.size} selected
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="gap-2"
+                disabled={isExtracting}
+                onClick={handleBulkExtract}
+              >
+                {isExtracting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {isExtracting ? 'Extracting...' : 'Re-extract'}
+              </Button>
+              <button
+                className="text-zinc-400 hover:text-white transition-colors"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           )}
         </div>
