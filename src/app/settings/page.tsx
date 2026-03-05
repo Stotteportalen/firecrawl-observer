@@ -8,11 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useConvexAuth, useQuery, useMutation, useAction } from "convex/react"
-import { api } from "../../../convex/_generated/api"
-import { Id } from "../../../convex/_generated/dataModel"
+import { useSession } from '@/lib/auth-client'
+import { useUserSettings, useUpdateSettings, useEmailConfig, useUpdateEmailConfig, useApiKeys, useCreateApiKey, useDeleteApiKey, useWebhookPayloads } from '@/hooks/use-data'
+import { mutate } from 'swr'
 import { Loader2, ArrowLeft, Mail, AlertCircle, Key, Copy, Plus, Webhook, CheckCircle, Check, HelpCircle, Clock, XCircle, ExternalLink, Bot, Info, Trash2 } from 'lucide-react'
-import { useAuthActions } from "@convex-dev/auth/react"
 import Link from 'next/link'
 import { FirecrawlKeyManager } from '@/components/FirecrawlKeyManager'
 import dynamic from 'next/dynamic'
@@ -22,7 +21,7 @@ import { APP_CONFIG, getFromEmail } from '@/config/app.config'
 // Dynamic import to avoid SSR issues with TipTap
 const EmailTemplateEditor = dynamic(
   () => import('@/components/EmailTemplateEditor').then(mod => mod.EmailTemplateEditor),
-  { 
+  {
     ssr: false,
     loading: () => <div className="h-64 bg-gray-50 rounded-lg animate-pulse" />
   }
@@ -31,21 +30,21 @@ const EmailTemplateEditor = dynamic(
 function SettingsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isLoading: authLoading, isAuthenticated } = useConvexAuth()
-  const { } = useAuthActions()
-  
+  const { data: session, isPending: authLoading } = useSession()
+  const isAuthenticated = !!session
+
   const [activeSection, setActiveSection] = useState<'email' | 'webhooks' | 'firecrawl' | 'api' | 'ai'>('email')
-  
+
   // API Key state
   const [showNewApiKey, setShowNewApiKey] = useState(false)
   const [newApiKeyName, setNewApiKeyName] = useState('')
   const [createdApiKey, setCreatedApiKey] = useState<string | null>(null)
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null)
-  
+
   // Webhook playground state
   const [copiedWebhook, setCopiedWebhook] = useState(false)
   const [expandedPayload, setExpandedPayload] = useState<string | null>(null)
-  
+
   // Notification settings state
   const [notificationEmail, setNotificationEmail] = useState('')
   const [defaultWebhook, setDefaultWebhook] = useState('')
@@ -60,7 +59,7 @@ function SettingsContent() {
   const [showHtmlSource, setShowHtmlSource] = useState(true)
   const [isSendingTestEmail, setIsSendingTestEmail] = useState(false)
   const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; message: string } | null>(null)
-  
+
   // AI settings state
   const [aiEnabled, setAiEnabled] = useState(false)
   const [aiModel, setAiModel] = useState('gpt-4o-mini') // Default to OpenAI's gpt-4o-mini
@@ -74,31 +73,27 @@ function SettingsContent() {
   const [aiSuccess, setAiSuccess] = useState(false)
   const [isTestingAI, setIsTestingAI] = useState(false)
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null)
-  
+
   // API Key queries and mutations
-  const apiKeys = useQuery(api.apiKeys.getUserApiKeys)
-  const createApiKey = useMutation(api.apiKeys.createApiKey)
-  const deleteApiKey = useMutation(api.apiKeys.deleteApiKey)
-  
-  // Webhook playground queries and mutations
-  const webhookPayloads = useQuery(api.webhookPlayground.getWebhookPayloads, { limit: 50 })
-  const clearPayloads = useMutation(api.webhookPlayground.clearWebhookPayloads)
-  
+  const { data: apiKeysData } = useApiKeys()
+  const { trigger: createApiKeyTrigger } = useCreateApiKey()
+  const { trigger: deleteApiKeyTrigger } = useDeleteApiKey()
+
+  // Webhook playground queries
+  const { data: webhookPayloadsData } = useWebhookPayloads()
+
   // User settings queries and mutations
-  const userSettings = useQuery(api.userSettings.getUserSettings)
-  const emailConfig = useQuery(api.emailManager.getEmailConfig)
-  const updateDefaultWebhook = useMutation(api.userSettings.updateDefaultWebhook)
-  const updateEmailConfig = useMutation(api.emailManager.updateEmailConfig)
-  const updateEmailTemplate = useMutation(api.userSettings.updateEmailTemplate)
-  const resendVerificationEmail = useAction(api.emailManager.resendVerificationEmail)
-  const updateAISettings = useMutation(api.userSettings.updateAISettings)
-  const updateNotificationFiltering = useMutation(api.userSettings.updateNotificationFiltering)
-  const testAIModel = useAction(api.testActions.testAIModel)
-  const testEmailSending = useAction(api.testActions.testEmailSending)
-  
-  // Query currentUser - it will return null if not authenticated
-  // const currentUser = useQuery(api.users.getCurrentUser)
-  
+  const { data: userSettingsData } = useUserSettings()
+  const { data: emailConfigData } = useEmailConfig()
+  const { trigger: updateSettingsTrigger } = useUpdateSettings()
+  const { trigger: updateEmailConfigTrigger } = useUpdateEmailConfig()
+
+  // Derive data from SWR responses
+  const apiKeys = apiKeysData || []
+  const webhookPayloads = webhookPayloadsData || []
+  const userSettings = userSettingsData
+  const emailConfig = emailConfigData
+
   // Handle query parameter navigation
   useEffect(() => {
     const section = searchParams.get('section')
@@ -107,13 +102,13 @@ function SettingsContent() {
     } else if (section === 'email') {
       setActiveSection('email')
     }
-    
+
     // Handle verification success
     if (searchParams.get('verified') === 'true') {
       setEmailSuccess(true)
       setTimeout(() => setEmailSuccess(false), 5000)
     }
-    
+
     // Handle verification errors
     const error = searchParams.get('error')
     if (error) {
@@ -139,7 +134,7 @@ function SettingsContent() {
       setTimeout(() => setEmailError(null), 10000)
     }
   }, [searchParams])
-  
+
   // Populate form fields with existing data
   useEffect(() => {
     if (userSettings?.defaultWebhookUrl) {
@@ -162,13 +157,13 @@ function SettingsContent() {
       `.trim()
       setEmailTemplate(defaultTemplate)
     }
-    
+
     // Populate AI settings
     if (userSettings) {
       setAiEnabled(userSettings.aiAnalysisEnabled || false)
       setAiModel(userSettings.aiModel || 'gpt-4o-mini')
       setAiBaseUrl(userSettings.aiBaseUrl || '')
-      
+
       // Set system prompt with default if not provided
       const defaultSystemPrompt = `You are an AI assistant specialized in analyzing website changes. Your task is to determine if a detected change is "meaningful" or just noise.
 
@@ -195,7 +190,7 @@ Analyze the provided diff and return a JSON response with:
   "isMeaningful": true/false,
   "reasoning": "Brief explanation of your decision"
 }`;
-      
+
       setAiSystemPrompt(userSettings.aiSystemPrompt || defaultSystemPrompt)
       setAiThreshold(userSettings.aiMeaningfulChangeThreshold || 70)
       setAiApiKey(userSettings.aiApiKey || '')
@@ -203,13 +198,13 @@ Analyze the provided diff and return a JSON response with:
       setWebhookOnlyIfMeaningful(userSettings.webhookOnlyIfMeaningful || false)
     }
   }, [userSettings])
-  
+
   useEffect(() => {
     if (emailConfig?.email) {
       setNotificationEmail(emailConfig.email)
     }
   }, [emailConfig])
-  
+
   // Show loading while auth is loading
   if (authLoading) {
     return (
@@ -236,40 +231,42 @@ Analyze the provided diff and return a JSON response with:
     return null
   }
 
-  
+
   const handleCreateApiKey = async () => {
     if (!newApiKeyName.trim()) return
-    
+
     try {
-      const result = await createApiKey({ name: newApiKeyName })
+      const result = await createApiKeyTrigger({ name: newApiKeyName })
       setCreatedApiKey(result.key)
       setNewApiKeyName('')
       setShowNewApiKey(false)
+      mutate('/api/data/api-keys')
     } catch (error) {
       console.error('Failed to create API key:', error)
     }
   }
-  
+
   const handleCopyApiKey = (key: string, keyId: string) => {
     navigator.clipboard.writeText(key)
     setCopiedKeyId(keyId)
     setTimeout(() => setCopiedKeyId(null), 2000)
   }
-  
+
   const handleDeleteApiKey = async (keyId: string) => {
     if (!confirm('Are you sure you want to delete this API key? This action cannot be undone.')) return
-    
+
     try {
-      await deleteApiKey({ keyId: keyId as Id<"apiKeys"> })
+      await deleteApiKeyTrigger({ id: keyId })
+      mutate('/api/data/api-keys')
     } catch (error) {
       console.error('Failed to delete API key:', error)
     }
   }
-  
+
   return (
     <Layout>
       <Header />
-      
+
       <MainContent maxWidth="7xl" className="py-12">
         <div>
           <div className="flex items-center gap-4 mb-8">
@@ -278,7 +275,7 @@ Analyze the provided diff and return a JSON response with:
             </Link>
             <h1 className="text-3xl font-bold">Settings</h1>
           </div>
-          
+
           <div className="flex gap-8">
             {/* Sidebar */}
             <div className="w-64 flex-shrink-0">
@@ -340,13 +337,13 @@ Analyze the provided diff and return a JSON response with:
                 </button>
               </nav>
             </div>
-            
+
             {/* Content */}
             <div className="flex-1">
               {activeSection === 'email' && (
                 <div className="bg-white rounded-lg shadow-sm p-6">
                   <h2 className="text-xl font-semibold mb-6">Email Notifications</h2>
-                  
+
                   {/* Error message */}
                   {emailError && (
                     <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -356,7 +353,7 @@ Analyze the provided diff and return a JSON response with:
                       </div>
                     </div>
                   )}
-                  
+
                   <div className="space-y-8">
                     {/* Email Configuration */}
                     <div>
@@ -364,7 +361,7 @@ Analyze the provided diff and return a JSON response with:
                         <Mail className="h-5 w-5" />
                         Email Notifications
                       </h3>
-                      
+
                       <div className="space-y-4">
                         <div>
                           <Label htmlFor="notification-email">Notification Email</Label>
@@ -377,14 +374,14 @@ Analyze the provided diff and return a JSON response with:
                               onChange={(e) => setNotificationEmail(e.target.value)}
                               className="flex-1"
                             />
-                            <Button 
-                              variant="orange" 
+                            <Button
+                              variant="orange"
                               size="sm"
                               disabled={isUpdatingEmail || !notificationEmail || notificationEmail === emailConfig?.email}
                               onClick={async () => {
                                 setIsUpdatingEmail(true)
                                 try {
-                                  await updateEmailConfig({ email: notificationEmail })
+                                  await updateEmailConfigTrigger({ email: notificationEmail })
                                   setEmailSuccess(true)
                                   setTimeout(() => setEmailSuccess(false), 3000)
                                 } catch (error) {
@@ -407,12 +404,12 @@ Analyze the provided diff and return a JSON response with:
                             We&apos;ll send change notifications to this email address
                           </p>
                         </div>
-                        
+
                         {/* Email verification status */}
                         {emailConfig && (
                           <div className={`flex items-center justify-between p-3 rounded-lg ${
-                            emailConfig.isVerified 
-                              ? 'bg-green-50 border border-green-200' 
+                            emailConfig.isVerified
+                              ? 'bg-green-50 border border-green-200'
                               : 'bg-amber-50 border border-amber-200'
                           }`}>
                             <div className="flex items-center gap-2">
@@ -441,7 +438,11 @@ Analyze the provided diff and return a JSON response with:
                                     setIsSendingTestEmail(true)
                                     setTestEmailResult(null)
                                     try {
-                                      const result = await testEmailSending()
+                                      const result = await fetch('/api/data/settings', {
+                                        method: 'PUT',
+                                        body: JSON.stringify({ action: 'testEmail' }),
+                                        headers: { 'Content-Type': 'application/json' }
+                                      }).then(r => r.json())
                                       setTestEmailResult({
                                         success: result.success,
                                         message: result.message
@@ -470,7 +471,11 @@ Analyze the provided diff and return a JSON response with:
                                   size="sm"
                                   onClick={async () => {
                                     try {
-                                      await resendVerificationEmail()
+                                      await fetch('/api/data/email-config', {
+                                        method: 'PUT',
+                                        body: JSON.stringify({ action: 'resend' }),
+                                        headers: { 'Content-Type': 'application/json' }
+                                      })
                                       alert('Verification email sent!')
                                     } catch (error) {
                                       console.error('Failed to resend email:', error)
@@ -484,18 +489,18 @@ Analyze the provided diff and return a JSON response with:
                             </div>
                           </div>
                         )}
-                        
+
                         {/* Test email result */}
                         {testEmailResult && (
                           <div className={`p-3 rounded-lg text-sm ${
-                            testEmailResult.success 
-                              ? 'bg-green-50 text-green-700 border border-green-200' 
+                            testEmailResult.success
+                              ? 'bg-green-50 text-green-700 border border-green-200'
                               : 'bg-red-50 text-red-700 border border-red-200'
                           }`}>
                             {testEmailResult.success ? '✅' : '❌'} {testEmailResult.message}
                           </div>
                         )}
-                        
+
                         {/* Email template preview */}
                         <div>
                           <h4 className="font-medium mb-2">Email Preview</h4>
@@ -520,14 +525,14 @@ Analyze the provided diff and return a JSON response with:
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* Email Template Editor */}
                     <div className="border-t pt-6">
                       <h4 className="font-medium mb-3">Email Template</h4>
                       <p className="text-sm text-gray-600 mb-4">
                         Customize the email template that will be sent when changes are detected. Use variables to insert dynamic content.
                       </p>
-                      
+
                       {/* Available Variables */}
                       <div className="mb-4 p-3 border rounded-lg">
                         <h5 className="font-medium mb-2">Available Variables</h5>
@@ -576,7 +581,7 @@ Analyze the provided diff and return a JSON response with:
                           </p>
                         )}
                       </div>
-                      
+
                       {/* Toggle between editor and HTML view */}
                       <div className="mb-4 flex gap-2">
                         <Button
@@ -594,7 +599,7 @@ Analyze the provided diff and return a JSON response with:
                           HTML Source
                         </Button>
                       </div>
-                      
+
                       {showHtmlSource ? (
                         <div className="border rounded-lg">
                           <textarea
@@ -612,7 +617,7 @@ Analyze the provided diff and return a JSON response with:
                           disabled={isUpdatingTemplate}
                         />
                       )}
-                      
+
                       {/* Email Preview */}
                       <div className="mt-6">
                         <h4 className="font-medium mb-3">Preview</h4>
@@ -623,9 +628,9 @@ Analyze the provided diff and return a JSON response with:
                               <p><strong>To:</strong> {notificationEmail || APP_CONFIG.email.defaultRecipient}</p>
                               <p><strong>Subject:</strong> Changes detected on Example Website</p>
                             </div>
-                            <div 
+                            <div
                               className="prose prose-sm max-w-none"
-                              dangerouslySetInnerHTML={{ 
+                              dangerouslySetInnerHTML={{
                                 __html: emailTemplate
                                   .replace(/{{websiteName}}/g, 'Example Website')
                                   .replace(/{{websiteUrl}}/g, 'https://example.com')
@@ -643,7 +648,7 @@ Analyze the provided diff and return a JSON response with:
                           </div>
                         </div>
                       </div>
-                      
+
                       <div className="mt-4 flex items-center justify-between">
                         <Button
                           variant="outline"
@@ -677,10 +682,10 @@ Analyze the provided diff and return a JSON response with:
                               alert('Template validation failed:\n\n' + validation.errors.join('\n'))
                               return
                             }
-                            
+
                             setIsUpdatingTemplate(true)
                             try {
-                              await updateEmailTemplate({ template: emailTemplate })
+                              await updateSettingsTrigger({ action: 'updateEmailTemplate', template: emailTemplate })
                               setTemplateSuccess(true)
                               setTimeout(() => setTemplateSuccess(false), 3000)
                             } catch (error) {
@@ -705,7 +710,7 @@ Analyze the provided diff and return a JSON response with:
                         </Button>
                       </div>
                     </div>
-                    
+
                     {/* Global email preferences */}
                     <div className="border-t pt-6">
                       <h4 className="font-medium mb-3">Email Preferences</h4>
@@ -719,16 +724,16 @@ Analyze the provided diff and return a JSON response with:
                   </div>
                 </div>
               )}
-              
+
               {activeSection === 'webhooks' && (
                 <div className="bg-white rounded-lg shadow-sm p-6">
                   <h2 className="text-xl font-semibold mb-6">Webhooks</h2>
-                  
+
                   <div className="space-y-8">
                     {/* Default Webhook Configuration */}
                     <div>
                       <h3 className="text-lg font-medium mb-4">Default Webhook URL</h3>
-                      
+
                       <div className="space-y-4">
                         <div>
                           <Label htmlFor="default-webhook">Default Webhook URL (Optional)</Label>
@@ -741,15 +746,16 @@ Analyze the provided diff and return a JSON response with:
                               onChange={(e) => setDefaultWebhook(e.target.value)}
                               className="flex-1"
                             />
-                            <Button 
-                              variant="orange" 
+                            <Button
+                              variant="orange"
                               size="sm"
                               disabled={isUpdatingWebhook || defaultWebhook === (userSettings?.defaultWebhookUrl || '')}
                               onClick={async () => {
                                 setIsUpdatingWebhook(true)
                                 try {
-                                  await updateDefaultWebhook({ 
-                                    webhookUrl: defaultWebhook || undefined 
+                                  await updateSettingsTrigger({
+                                    action: 'updateDefaultWebhook',
+                                    webhookUrl: defaultWebhook || undefined
                                   })
                                   setWebhookSuccess(true)
                                   setTimeout(() => setWebhookSuccess(false), 3000)
@@ -775,14 +781,14 @@ Analyze the provided diff and return a JSON response with:
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* Webhook Playground */}
                     <div className="border-t pt-8">
                       <h3 className="text-lg font-medium mb-4 flex items-center gap-2 text-black">
                         <Webhook className="h-5 w-5 text-orange-500" />
                         Webhook Playground
                       </h3>
-                      
+
                       <div className="space-y-6">
                         {/* Webhook URL Section */}
                         <div>
@@ -803,7 +809,7 @@ Analyze the provided diff and return a JSON response with:
                               </div>
                             </div>
                           </div>
-                          
+
                           {typeof window !== 'undefined' && window.location.hostname === 'localhost' && (
                             <div className="mb-4 p-4 border border-orange-200 rounded-lg">
                               <div className="flex items-start gap-3">
@@ -811,7 +817,7 @@ Analyze the provided diff and return a JSON response with:
                                 <div>
                                   <p className="text-sm font-medium">Localhost URLs won&apos;t work!</p>
                                   <p className="text-sm text-gray-600 mt-1">
-                                    Convex runs in the cloud and cannot access localhost. Use one of these options:
+                                    The server cannot access localhost. Use one of these options:
                                   </p>
                                   <ul className="text-sm text-gray-600 mt-2 space-y-1 list-disc list-inside">
                                     <li>Use <a href="https://ngrok.com" target="_blank" className="underline font-medium">ngrok</a> to expose your local server: <code className="bg-gray-100 px-1 rounded">ngrok http {window.location.port || 3000}</code></li>
@@ -822,7 +828,7 @@ Analyze the provided diff and return a JSON response with:
                               </div>
                             </div>
                           )}
-                          
+
                           <div className="flex items-center gap-2">
                             <Input
                               value={typeof window !== 'undefined' ? `${window.location.origin}/api/test-webhook` : 'Loading...'}
@@ -855,7 +861,7 @@ Analyze the provided diff and return a JSON response with:
                             Use this URL in your website notification settings to test webhook deliveries
                           </p>
                         </div>
-                        
+
                         {/* Webhook Payloads List */}
                         <div className="border rounded-lg">
                           <div className="px-4 py-3 border-b flex items-center justify-between bg-gray-50">
@@ -877,7 +883,8 @@ Analyze the provided diff and return a JSON response with:
                                 size="sm"
                                 onClick={async () => {
                                   if (confirm('Are you sure you want to clear all webhook payloads?')) {
-                                    await clearPayloads()
+                                    await fetch('/api/data/webhook-playground', { method: 'DELETE' })
+                                    mutate('/api/data/webhook-playground')
                                   }
                                 }}
                               >
@@ -897,9 +904,9 @@ Analyze the provided diff and return a JSON response with:
                             </div>
                           ) : (
                             <div className="divide-y max-h-96 overflow-y-auto">
-                              {webhookPayloads.map((payload) => (
-                                <div 
-                                  key={payload._id} 
+                              {webhookPayloads.map((payload: { id: string; status: string; receivedAt: string | number; payload: Record<string, unknown> & { event?: string; website?: { url?: string } } }) => (
+                                <div
+                                  key={payload.id}
                                   className="p-4 hover:bg-gray-50 transition-all"
                                 >
                                   <div className="flex items-start justify-between">
@@ -917,7 +924,8 @@ Analyze the provided diff and return a JSON response with:
                                           <span className="text-sm text-gray-500 flex items-center gap-1">
                                             <Clock className="h-3 w-3" />
                                             {(() => {
-                                              const seconds = Math.floor((Date.now() - payload.receivedAt) / 1000)
+                                              const receivedAt = typeof payload.receivedAt === 'number' ? payload.receivedAt : new Date(payload.receivedAt).getTime()
+                                              const seconds = Math.floor((Date.now() - receivedAt) / 1000)
                                               if (seconds < 60) return 'Just now'
                                               if (seconds < 3600) return `${Math.floor(seconds / 60)} mins ago`
                                               if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`
@@ -926,7 +934,7 @@ Analyze the provided diff and return a JSON response with:
                                           </span>
                                         </div>
                                         {payload.payload?.website?.url && (
-                                          <a 
+                                          <a
                                             href={payload.payload.website.url}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -944,7 +952,7 @@ Analyze the provided diff and return a JSON response with:
                                           <div className="p-2">
                                             <pre className="whitespace-pre-wrap break-all">
                                               <code>
-                                                {expandedPayload === payload._id 
+                                                {expandedPayload === payload.id
                                                   ? JSON.stringify(payload.payload, null, 2)
                                                   : JSON.stringify(payload.payload).slice(0, 100) + '...'
                                                 }
@@ -957,10 +965,10 @@ Analyze the provided diff and return a JSON response with:
                                               size="sm"
                                               className="h-6 px-2 text-xs"
                                               onClick={() => setExpandedPayload(
-                                                expandedPayload === payload._id ? null : payload._id
+                                                expandedPayload === payload.id ? null : payload.id
                                               )}
                                             >
-                                              {expandedPayload === payload._id ? 'Collapse' : 'Expand'}
+                                              {expandedPayload === payload.id ? 'Collapse' : 'Expand'}
                                             </Button>
                                           </div>
                                         </div>
@@ -977,48 +985,48 @@ Analyze the provided diff and return a JSON response with:
                   </div>
                 </div>
               )}
-              
+
               {activeSection === 'firecrawl' && (
                 <div className="bg-white rounded-lg shadow-sm p-6">
                   <h2 className="text-xl font-semibold mb-6">Firecrawl Auth</h2>
-                  
+
                   <div className="space-y-6">
                     <div>
                       <p className="text-gray-600 mb-4">
                         Connect your Firecrawl API key to enable website monitoring. Firecrawl powers the web scraping and change detection functionality.
                       </p>
-                      
-                      <a 
-                        href="https://www.firecrawl.dev/app/api-keys" 
-                        target="_blank" 
+
+                      <a
+                        href="https://www.firecrawl.dev/app/api-keys"
+                        target="_blank"
                         rel="noopener noreferrer"
                         className="text-orange-600 hover:text-orange-700 text-sm font-medium"
                       >
                         Get your Firecrawl API key →
                       </a>
                     </div>
-                    
+
                     <FirecrawlKeyManager />
                   </div>
                 </div>
               )}
-              
+
               {activeSection === 'api' && (
                 <div className="bg-white rounded-lg shadow-sm p-6">
                   <h2 className="text-xl font-semibold mb-6">Observer API Keys</h2>
-                  
+
                   <div className="space-y-6">
                     <div>
                       <p className="text-gray-600 mb-4">
-                        API keys allow you to programmatically add websites to your monitoring list. 
+                        API keys allow you to programmatically add websites to your monitoring list.
                         Keep your API keys secure and do not share them publicly.
                       </p>
-                      
+
                       <Link href="/api-docs" className="text-orange-600 hover:text-orange-700 text-sm font-medium">
                         View API Documentation →
                       </Link>
                     </div>
-                    
+
                     {/* Created API key alert */}
                     {createdApiKey && (
                       <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
@@ -1044,7 +1052,7 @@ Analyze the provided diff and return a JSON response with:
                         </div>
                       </div>
                     )}
-                    
+
                     {/* API Keys list */}
                     <div>
                       <div className="flex items-center justify-between mb-4">
@@ -1059,7 +1067,7 @@ Analyze the provided diff and return a JSON response with:
                           Create New Key
                         </Button>
                       </div>
-                      
+
                       {showNewApiKey && (
                         <div className="mb-4 p-4 border rounded-lg bg-gray-50">
                           <div className="flex gap-2">
@@ -1091,12 +1099,12 @@ Analyze the provided diff and return a JSON response with:
                           </div>
                         </div>
                       )}
-                      
+
                       {apiKeys && apiKeys.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {apiKeys.map((key) => (
+                          {apiKeys.map((key: { id: string; name: string; keyPreview: string; createdAt: string; lastUsed?: string }) => (
                             <div
-                              key={key._id}
+                              key={key.id}
                               className="border rounded-lg p-3 hover:bg-gray-50 transition-colors"
                             >
                               <div className="flex items-start justify-between mb-2">
@@ -1104,7 +1112,7 @@ Analyze the provided diff and return a JSON response with:
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleDeleteApiKey(key._id)}
+                                  onClick={() => handleDeleteApiKey(key.id)}
                                   className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50 border-0"
                                 >
                                   <Trash2 className="h-3 w-3" />
@@ -1117,10 +1125,10 @@ Analyze the provided diff and return a JSON response with:
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleCopyApiKey(key.keyPreview, key._id)}
+                                  onClick={() => handleCopyApiKey(key.keyPreview, key.id)}
                                   className="h-6 w-6 p-0 border-0"
                                 >
-                                  {copiedKeyId === key._id ? (
+                                  {copiedKeyId === key.id ? (
                                     <Check className="h-3 w-3 text-green-600" />
                                   ) : (
                                     <Copy className="h-3 w-3" />
@@ -1143,7 +1151,7 @@ Analyze the provided diff and return a JSON response with:
                           <p className="text-xs mt-1">Create your first API key to get started</p>
                         </div>
                       )}
-                      
+
                       {apiKeys && apiKeys.length >= 5 && (
                         <p className="text-xs text-gray-500 mt-2">
                           Maximum of 5 API keys allowed per account
@@ -1153,11 +1161,11 @@ Analyze the provided diff and return a JSON response with:
                   </div>
                 </div>
               )}
-              
+
               {activeSection === 'ai' && (
                 <div className="bg-white rounded-lg shadow-sm p-6">
                   <h2 className="text-xl font-semibold mb-6">AI Analysis Settings</h2>
-                  
+
                   <div className="space-y-6">
                     {/* AI Enable Toggle */}
                     <div className="flex items-center justify-between">
@@ -1177,13 +1185,13 @@ Analyze the provided diff and return a JSON response with:
                         <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-600"></div>
                       </label>
                     </div>
-                    
+
                     {aiEnabled && (
                       <>
                         {/* LLM Configuration */}
                         <div className="border rounded-lg p-6 space-y-6">
                           <h4 className="font-medium text-lg">LLM Configuration</h4>
-                          
+
                           {/* API Key */}
                           <div>
                             <Label htmlFor="ai-api-key">API Key</Label>
@@ -1204,7 +1212,8 @@ Analyze the provided diff and return a JSON response with:
                                   setAiTestResult(null)
                                   try {
                                     // First save the settings
-                                    await updateAISettings({
+                                    await updateSettingsTrigger({
+                                      action: 'updateAISettings',
                                       enabled: true,
                                       model: aiModel,
                                       baseUrl: aiBaseUrl,
@@ -1213,7 +1222,11 @@ Analyze the provided diff and return a JSON response with:
                                       apiKey: aiApiKey,
                                     })
                                     // Then test the connection
-                                    const result = await testAIModel()
+                                    const result = await fetch('/api/data/settings', {
+                                      method: 'PUT',
+                                      body: JSON.stringify({ action: 'testAI' }),
+                                      headers: { 'Content-Type': 'application/json' }
+                                    }).then(r => r.json())
                                     setAiTestResult({
                                       success: result.success,
                                       message: result.success ? (result.message || 'Success') : (result.error || 'Test failed')
@@ -1241,15 +1254,15 @@ Analyze the provided diff and return a JSON response with:
                             </p>
                             {aiTestResult && (
                               <div className={`mt-2 p-2 rounded text-sm ${
-                                aiTestResult.success 
-                                  ? 'bg-green-50 text-green-700 border border-green-200' 
+                                aiTestResult.success
+                                  ? 'bg-green-50 text-green-700 border border-green-200'
                                   : 'bg-red-50 text-red-700 border border-red-200'
                               }`}>
                                 {aiTestResult.success ? '✅' : '❌'} {aiTestResult.message}
                               </div>
                             )}
                           </div>
-                          
+
                           {/* Model */}
                           <div>
                             <Label htmlFor="ai-model">Model</Label>
@@ -1265,7 +1278,7 @@ Analyze the provided diff and return a JSON response with:
                               Model identifier (e.g., gpt-4o-mini, claude-4-sonnet, etc.)
                             </p>
                           </div>
-                          
+
                           {/* Base URL */}
                           <div>
                             <Label htmlFor="ai-base-url">Base URL (Optional)</Label>
@@ -1281,7 +1294,7 @@ Analyze the provided diff and return a JSON response with:
                               Custom endpoint for OpenAI-compatible APIs. Leave empty for OpenAI.
                             </p>
                           </div>
-                          
+
                           {/* Provider Examples */}
                           <div className="text-sm text-gray-600 space-y-1">
                             <p className="font-medium">Provider Examples:</p>
@@ -1294,7 +1307,7 @@ Analyze the provided diff and return a JSON response with:
                             </ul>
                           </div>
                         </div>
-                        
+
                         {/* System Prompt */}
                         <div>
                           <div className="flex items-center justify-between mb-2">
@@ -1346,7 +1359,7 @@ Analyze the provided diff and return a JSON response with:
                             Customize how the AI analyzes changes. The AI will receive the diff and should return JSON.
                           </p>
                         </div>
-                        
+
                         {/* Threshold Setting */}
                         <div>
                           <Label htmlFor="ai-threshold">Meaningful Change Threshold</Label>
@@ -1368,7 +1381,7 @@ Analyze the provided diff and return a JSON response with:
                             Changes with AI scores above this threshold will be marked as meaningful
                           </p>
                         </div>
-                        
+
                         {/* Info Box */}
                         <div className="border rounded-lg p-4">
                           <div className="flex items-start gap-3">
@@ -1386,7 +1399,7 @@ Analyze the provided diff and return a JSON response with:
                         </div>
                       </>
                     )}
-                    
+
                     {/* AI-based Notification Filtering */}
                     {aiEnabled && (
                       <div className="border rounded-lg p-4">
@@ -1397,7 +1410,7 @@ Analyze the provided diff and return a JSON response with:
                         <p className="text-sm text-gray-600 mb-4">
                           Only send notifications when AI determines changes are meaningful
                         </p>
-                        
+
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
@@ -1414,7 +1427,7 @@ Analyze the provided diff and return a JSON response with:
                               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
                             </label>
                           </div>
-                          
+
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
                               <label className="text-sm font-medium">Webhook notifications only for meaningful changes</label>
@@ -1433,7 +1446,7 @@ Analyze the provided diff and return a JSON response with:
                         </div>
                       </div>
                     )}
-                    
+
                     {/* Save Button */}
                     <div className="flex justify-end">
                       <Button
@@ -1441,7 +1454,8 @@ Analyze the provided diff and return a JSON response with:
                         onClick={async () => {
                           setIsUpdatingAI(true)
                           try {
-                            await updateAISettings({
+                            await updateSettingsTrigger({
+                              action: 'updateAISettings',
                               enabled: aiEnabled,
                               model: aiEnabled ? aiModel : undefined,
                               baseUrl: aiEnabled ? aiBaseUrl : undefined,
@@ -1449,13 +1463,14 @@ Analyze the provided diff and return a JSON response with:
                               threshold: aiEnabled ? aiThreshold : undefined,
                               apiKey: aiEnabled ? aiApiKey : undefined,
                             })
-                            
+
                             // Also update notification filtering settings
-                            await updateNotificationFiltering({
+                            await updateSettingsTrigger({
+                              action: 'updateNotificationFiltering',
                               emailOnlyIfMeaningful,
                               webhookOnlyIfMeaningful,
                             })
-                            
+
                             setAiSuccess(true)
                             setTimeout(() => setAiSuccess(false), 3000)
                           } catch (error) {
@@ -1481,12 +1496,12 @@ Analyze the provided diff and return a JSON response with:
                   </div>
                 </div>
               )}
-              
+
             </div>
           </div>
         </div>
       </MainContent>
-      
+
       <Footer />
     </Layout>
   )

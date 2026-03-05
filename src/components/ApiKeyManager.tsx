@@ -4,22 +4,21 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Key, Copy, Trash2, Plus } from 'lucide-react'
-import { useQuery, useMutation } from "convex/react"
-import { api } from "../../convex/_generated/api"
-import { Id } from "../../convex/_generated/dataModel"
+import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '@/hooks/use-data'
+import { mutate } from 'swr'
 
 export function ApiKeyManager() {
   const [showNewApiKey, setShowNewApiKey] = useState(false)
   const [newApiKeyName, setNewApiKeyName] = useState('')
   const [createdApiKey, setCreatedApiKey] = useState<string | null>(null)
-  
-  const apiKeys = useQuery(api.apiKeys.getUserApiKeys) || []
-  const createApiKey = useMutation(api.apiKeys.createApiKey)
-  const deleteApiKey = useMutation(api.apiKeys.deleteApiKey)
-  
+
+  const { data: apiKeys = [] } = useApiKeys()
+  const { trigger: createApiKey } = useCreateApiKey()
+  const { trigger: deleteApiKey } = useDeleteApiKey()
+
   const handleCreateApiKey = async () => {
     if (!newApiKeyName.trim()) return
-    
+
     try {
       const result = await createApiKey({ name: newApiKeyName })
       setCreatedApiKey(result.key)
@@ -29,22 +28,23 @@ export function ApiKeyManager() {
       console.error('Failed to create API key:', error)
     }
   }
-  
-  
+
+
   const handleDeleteApiKey = async (keyId: string) => {
     if (!confirm('Are you sure you want to delete this API key?')) return
-    
+
     try {
-      await deleteApiKey({ keyId: keyId as Id<"apiKeys"> })
+      await deleteApiKey({ id: keyId })
+      mutate('/api/data/api-keys')
     } catch (error) {
       console.error('Failed to delete API key:', error)
     }
   }
-  
+
   return (
     <div className="bg-white rounded-lg shadow-sm p-6">
       <h2 className="text-xl font-semibold mb-4">Your API Keys</h2>
-      
+
       {createdApiKey && (
         <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
           <h4 className="font-medium text-green-900 mb-2">API Key Created!</h4>
@@ -67,7 +67,7 @@ export function ApiKeyManager() {
           </div>
         </div>
       )}
-      
+
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-600">Use API keys to add websites programmatically</p>
         <Button
@@ -80,7 +80,7 @@ export function ApiKeyManager() {
           Create Key
         </Button>
       </div>
-      
+
       {showNewApiKey && (
         <div className="mb-4 p-4 border rounded-lg bg-gray-50">
           <div className="flex gap-2">
@@ -112,11 +112,11 @@ export function ApiKeyManager() {
           </div>
         </div>
       )}
-      
+
       {apiKeys.length > 0 ? (
         <div className="space-y-2">
           {apiKeys.map((key) => (
-            <div key={key._id} className="flex items-center justify-between p-3 border rounded-lg">
+            <div key={key.id} className="flex items-center justify-between p-3 border rounded-lg">
               <div className="flex-1">
                 <div className="font-medium text-sm">{key.name}</div>
                 <code className="text-xs text-gray-500 font-mono">{key.keyPreview}</code>
@@ -124,7 +124,7 @@ export function ApiKeyManager() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleDeleteApiKey(key._id)}
+                onClick={() => handleDeleteApiKey(key.id)}
                 className="text-red-600 hover:text-red-700"
               >
                 <Trash2 className="h-4 w-4" />

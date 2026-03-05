@@ -1,0 +1,380 @@
+generator client {
+  provider   = "prisma-client"
+  output     = "../.generated/prisma"
+  engineType = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── BetterAuth Tables ──────────────────────────────────────────────
+
+model FcoUser {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions       FcoSession[]
+  accounts       FcoAccount[]
+  apiKeys        FcoApiKey[]
+  firecrawlKeys  FcoFirecrawlApiKey[]
+  websites       FcoWebsite[]
+  scrapeResults  FcoScrapeResult[]
+  changeAlerts   FcoChangeAlert[]
+  emailConfig    FcoEmailConfig?
+  userSettings   FcoUserSettings?
+  crawlSessions  FcoCrawlSession[]
+  grantProviders GrantProvider[]
+
+  @@map("fco_user")
+}
+
+model FcoSession {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      FcoUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("fco_session")
+}
+
+model FcoAccount {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("fco_account")
+}
+
+model FcoVerification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@map("fco_verification")
+}
+
+// ─── Application Tables ─────────────────────────────────────────────
+
+model FcoApiKey {
+  id        String    @id @default(cuid())
+  userId    String
+  user      FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String    @unique
+  name      String
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("fco_api_keys")
+}
+
+model FcoFirecrawlApiKey {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  user         FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedKey String
+  lastUsed     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("fco_firecrawl_api_keys")
+}
+
+model FcoWebsite {
+  id                     String    @id @default(cuid())
+  url                    String
+  name                   String
+  userId                 String
+  user                   FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isActive               Boolean   @default(true)
+  isPaused               Boolean?
+  checkInterval          Int       // in minutes
+  lastChecked            DateTime?
+  notificationPreference String    @default("none") // none, email, webhook, both
+  webhookUrl             String?
+  monitorType            String    @default("single_page") // single_page, full_site
+  scrapeProvider         String    @default("firecrawl") // firecrawl, jina, exa
+  crawlLimit             Int?
+  crawlDepth             Int?
+  lastCrawlAt            DateTime?
+  totalPages             Int?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  scrapeResults  FcoScrapeResult[]
+  changeAlerts   FcoChangeAlert[]
+  crawlSessions  FcoCrawlSession[]
+
+  @@index([userId])
+  @@index([isActive])
+  @@map("fco_websites")
+}
+
+model FcoScrapeResult {
+  id                String    @id @default(cuid())
+  websiteId         String
+  website           FcoWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  userId            String
+  user              FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  markdown          String
+  changeStatus      String    // new, same, changed, removed, checking
+  visibility        String    @default("visible") // visible, hidden
+  previousScrapeAt  DateTime?
+  scrapedAt         DateTime
+  firecrawlMetadata Json?
+  ogImage           String?
+  title             String?
+  description       String?
+  url               String?   // The actual URL that was scraped
+  diffText          String?
+  diffJson          Json?
+
+  // AI Analysis (flattened from embedded object)
+  aiMeaningfulChangeScore Float?
+  aiIsMeaningfulChange    Boolean?
+  aiReasoning             String?
+  aiAnalyzedAt            DateTime?
+  aiModel                 String?
+
+  changeAlerts FcoChangeAlert[]
+
+  @@index([websiteId])
+  @@index([websiteId, scrapedAt])
+  @@index([userId, scrapedAt])
+  @@map("fco_scrape_results")
+}
+
+model FcoChangeAlert {
+  id             String          @id @default(cuid())
+  websiteId      String
+  website        FcoWebsite      @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  userId         String
+  user           FcoUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scrapeResultId String
+  scrapeResult   FcoScrapeResult @relation(fields: [scrapeResultId], references: [id], onDelete: Cascade)
+  changeType     String
+  summary        String
+  isRead         Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+
+  @@index([userId])
+  @@index([websiteId])
+  @@index([userId, isRead])
+  @@map("fco_change_alerts")
+}
+
+model FcoEmailConfig {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email              String
+  isVerified         Boolean   @default(false)
+  verificationToken  String?
+  verificationExpiry DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([email])
+  @@index([verificationToken])
+  @@map("fco_email_config")
+}
+
+model FcoUserSettings {
+  id                          String   @id @default(cuid())
+  userId                      String   @unique
+  user                        FcoUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultWebhookUrl           String?
+  emailNotificationsEnabled   Boolean  @default(true)
+  emailTemplate               String?
+  // AI Analysis settings
+  aiAnalysisEnabled           Boolean? @default(false)
+  aiModel                     String?
+  aiBaseUrl                   String?
+  aiSystemPrompt              String?
+  aiMeaningfulChangeThreshold Float?   @default(70)
+  aiApiKey                    String?  // encrypted
+  // AI-based notification filtering
+  emailOnlyIfMeaningful       Boolean? @default(false)
+  webhookOnlyIfMeaningful     Boolean? @default(false)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@map("fco_user_settings")
+}
+
+model FcoWebhookPlayground {
+  id         String   @id @default(cuid())
+  payload    Json?
+  headers    Json?
+  method     String
+  url        String
+  receivedAt DateTime @default(now())
+  status     String
+  response   Json?
+
+  @@index([receivedAt])
+  @@map("fco_webhook_playground")
+}
+
+model FcoCrawlSession {
+  id           String    @id @default(cuid())
+  websiteId    String
+  website      FcoWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  userId       String
+  user         FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  status       String    @default("running") // running, completed, failed
+  pagesFound   Int       @default(0)
+  pagesChanged Int?
+  pagesAdded   Int?
+  pagesRemoved Int?
+  error        String?
+  jobId        String?   // Firecrawl async job ID
+
+  @@index([websiteId])
+  @@index([userId, startedAt])
+  @@map("fco_crawl_sessions")
+}
+
+// ─── Grant Scheme Tables ────────────────────────────────────────────
+
+model GrantProvider {
+  id               String    @id @default(cuid())
+  userId           String
+  user             FcoUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  domain           String
+  websiteUrl       String
+  knownListingUrls String[]
+  status           String    @default("pending") // pending, discovering, active, paused, error
+  lastDiscoveryAt  DateTime?
+  totalPagesFound  Int       @default(0)
+  totalGrantsFound Int       @default(0)
+  checkFrequency   String    @default("monthly") // weekly, biweekly, monthly
+  notes            String?
+  ignorePatterns   String[]  @default([])
+  discoveryLimit   Int       @default(5000)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  discoveredPages DiscoveredPage[]
+  grantSchemes    GrantScheme[]
+
+  @@unique([userId, domain])
+  @@index([userId])
+  @@index([status])
+  @@map("grant_providers")
+}
+
+model DiscoveredPage {
+  id                   String    @id @default(cuid())
+  providerId           String
+  provider             GrantProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  url                  String
+  title                String?
+
+  // AI Classification
+  classificationStatus String    @default("pending") // pending, classified, confirmed_grant, confirmed_not_grant
+  isGrantPage          Boolean?
+  isListingPage        Boolean?
+  classificationScore  Float?
+  classificationReason String?
+  classifiedAt         DateTime?
+
+  // Human review
+  humanVerified        Boolean   @default(false)
+  humanDecision        String?   // grant, not_grant
+  urlRelevanceScore    Float?
+
+  grantSchemeId        String?
+  grantScheme          GrantScheme? @relation(fields: [grantSchemeId], references: [id])
+  discoveredAt         DateTime  @default(now())
+
+  @@unique([providerId, url])
+  @@index([providerId])
+  @@index([classificationStatus])
+  @@map("discovered_pages")
+}
+
+model GrantScheme {
+  id               String    @id @default(cuid())
+  providerId       String
+  provider         GrantProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  sourceUrl        String
+
+  // --- 8 Core fields (minimal, anti-hallucination) ---
+  name             String
+  providerName     String
+  summary          String?
+  fullMarkdown     String?
+  ragContent       String?   // AI-generated RAG-optimized description for semantic matching
+  applicationDeadline DateTime?
+  isRollingDeadline Boolean  @default(false)
+  status           String    @default("active") // active, closed, upcoming, unknown
+  fundingType      String?   // grant, loan, guarantee
+
+  // --- Extraction metadata ---
+  extractedJson    Json?
+  lastExtractedAt  DateTime?
+
+  // --- Change tracking ---
+  lastScrapedAt    DateTime?
+  lastChangeAt     DateTime?
+  changeCount      Int       @default(0)
+  isArchived       Boolean   @default(false)
+  archivedReason   String?
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  discoveredPages  DiscoveredPage[]
+  changeEvents     GrantChangeEvent[]
+
+  @@index([providerId])
+  @@index([status])
+  @@index([applicationDeadline])
+  @@index([isArchived])
+  @@map("grant_schemes")
+}
+
+model GrantChangeEvent {
+  id            String      @id @default(cuid())
+  grantSchemeId String
+  grantScheme   GrantScheme @relation(fields: [grantSchemeId], references: [id], onDelete: Cascade)
+  changeType    String      // content_updated, deadline_changed, status_changed, new_grant, grant_removed
+  summary       String
+  fieldChanges  Json?
+  diffText      String?
+  detectedAt    DateTime    @default(now())
+  isReviewed    Boolean     @default(false)
+
+  @@index([grantSchemeId])
+  @@index([detectedAt])
+  @@map("grant_change_events")
+}

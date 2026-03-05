@@ -6,10 +6,10 @@ import { Header } from '@/components/layout/header'
 import { Hero } from '@/components/layout/hero'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Loader2, Clock, ExternalLink, LogIn, Download, X, Play, Pause, Globe, RefreshCw, Settings2, Search, ChevronLeft, ChevronRight, Maximize2, Minimize2, Bot, Eye } from 'lucide-react'
-import { useAuthActions } from "@convex-dev/auth/react"
-import { useConvexAuth, useMutation, useQuery, useAction } from "convex/react"
-import { api } from "../../convex/_generated/api"
+import { Loader2, Clock, ExternalLink, LogIn, Download, X, Play, Pause, Globe, RefreshCw, Settings2, Search, ChevronLeft, ChevronRight, Maximize2, Minimize2, Bot, Eye, Zap } from 'lucide-react'
+import { signIn as authSignIn, signUp as authSignUp, useSession } from "@/lib/auth-client"
+import { useWebsites, useCreateWebsite, useFirecrawlKey, useLatestScrapes, useAllScrapeHistory, useQuickScrape, type QuickScrapeResult } from "@/hooks/use-data"
+import { Select } from '@/components/ui/select'
 import { useRouter } from 'next/navigation'
 import { WebhookConfigModal } from '@/components/WebhookConfigModal'
 import { FirecrawlKeyBanner } from '@/components/FirecrawlKeyBanner'
@@ -44,8 +44,8 @@ function getFaviconUrl(url: string): string {
 }
 
 export default function HomePage() {
-  const { isLoading: authLoading, isAuthenticated } = useConvexAuth()
-  const { signIn } = useAuthActions()
+  const { data: sessionData, isPending: authLoading } = useSession()
+  const isAuthenticated = !!sessionData?.user
   const { addToast } = useToast()
   const router = useRouter()
   
@@ -66,21 +66,24 @@ export default function HomePage() {
   const [error, setError] = useState('')
   const [isAdding, setIsAdding] = useState(false)
   
-  // Convex queries and mutations
-  const websites = useQuery(api.websites.getUserWebsites)
-  const firecrawlKey = useQuery(api.firecrawlKeys.getUserFirecrawlKey)
-  
+  // Quick Scrape state
+  const [scrapeUrl, setScrapeUrl] = useState('')
+  const [scrapeProvider, setScrapeProvider] = useState<'firecrawl' | 'jina' | 'exa'>('jina')
+  const [scrapeResult, setScrapeResult] = useState<QuickScrapeResult | null>(null)
+  const [scrapeError, setScrapeError] = useState('')
+  const { trigger: triggerQuickScrape, isMutating: isScraping } = useQuickScrape()
+
+  // SWR queries and mutations
+  const { data: websites, mutate: mutateWebsites } = useWebsites()
+  const { data: firecrawlKey } = useFirecrawlKey()
+  const { trigger: createWebsiteTrigger } = useCreateWebsite()
+
   // Track website list updates
   useEffect(() => {
     if (websites && websites.length > 0) {
       console.log(`Monitoring ${websites.length} website${websites.length !== 1 ? 's' : ''}`)
     }
   }, [websites])
-  const createWebsite = useMutation(api.websites.createWebsite)
-  const deleteWebsite = useMutation(api.websites.deleteWebsite)
-  const pauseWebsite = useMutation(api.websites.pauseWebsite)
-  const updateWebsite = useMutation(api.websites.updateWebsite)
-  const triggerScrape = useAction(api.firecrawl.triggerScrape)
 
   // Track scrape results
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(null)
@@ -114,10 +117,10 @@ export default function HomePage() {
   
   
   // Get latest scrape for each website
-  const latestScrapes = useQuery(api.websites.getLatestScrapeForWebsites)
-  
+  const { data: latestScrapes } = useLatestScrapes()
+
   // Get all scrape results for check log
-  const allScrapeHistory = useQuery(api.websites.getAllScrapeHistory)
+  const { data: allScrapeHistory } = useAllScrapeHistory()
 
   // Handle escape key for modals
   useEffect(() => {
@@ -172,11 +175,17 @@ export default function HomePage() {
     }
 
     try {
-      await signIn("password", {
-        email: trimmedEmail,
-        password,
-        flow: authMode,
-      })
+      let result;
+      if (authMode === 'signUp') {
+        result = await authSignUp.email({ email: trimmedEmail, password, name: trimmedEmail.split('@')[0] })
+      } else {
+        result = await authSignIn.email({ email: trimmedEmail, password })
+      }
+
+      if (result.error) {
+        throw new Error(result.error.message || result.error.code || 'Authentication failed')
+      }
+
       // Clear form on successful auth
       setEmail('')
       setPassword('')
@@ -185,19 +194,20 @@ export default function HomePage() {
       addToast({
         variant: 'success',
         title: authMode === 'signIn' ? 'Welcome Back!' : 'Account Created!',
-        description: authMode === 'signIn' 
-          ? 'You have successfully signed in.' 
+        description: authMode === 'signIn'
+          ? 'You have successfully signed in.'
           : 'Your account has been created successfully.',
         duration: 3000
       })
-      
+
       // Force a router refresh to ensure auth state is updated
       setTimeout(() => {
         router.refresh()
       }, 100)
-    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    } catch (error: unknown) {
+      console.error('Auth error:', error);
       // Check for InvalidAccountId in various ways
-      const errorMessage = error.message || error.toString() || '';
+      const errorMessage = error instanceof Error ? error.message : String(error);
       const errorLower = errorMessage.toLowerCase();
       
       // More comprehensive invalid account detection
@@ -314,10 +324,11 @@ export default function HomePage() {
     setUrl('')
   }
 
-  const formatTimeAgo = (timestamp: number | undefined) => {
+  const formatTimeAgo = (timestamp: number | string | Date | undefined | null) => {
     if (!timestamp) return 'Never'
-    
-    const seconds = Math.floor((Date.now() - timestamp) / 1000)
+
+    const ts = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime()
+    const seconds = Math.floor((Date.now() - ts) / 1000)
     
     if (seconds < 60) return 'Just now'
     if (seconds < 3600) return `${Math.floor(seconds / 60)} mins ago`
@@ -325,7 +336,7 @@ export default function HomePage() {
     return `${Math.floor(seconds / 86400)} days ago`
   }
 
-  const downloadMarkdown = (markdown: string | undefined, websiteName: string, timestamp: number) => {
+  const downloadMarkdown = (markdown: string | undefined, websiteName: string, timestamp: number | string | Date) => {
     if (!markdown) {
       console.error('No markdown content available to download')
       return
@@ -345,8 +356,7 @@ export default function HomePage() {
     setProcessingWebsites(prev => new Set([...prev, websiteId]))
     
     try {
-      await triggerScrape({ websiteId: websiteId as any }) // eslint-disable-line @typescript-eslint/no-explicit-any
-      // The UI will automatically update via Convex reactive queries
+      await fetch(`/api/data/websites/${websiteId}/scrape`, { method: 'POST' })
       
       // Keep processing indicator for a bit to show the scrape is running
       setTimeout(() => {
@@ -586,7 +596,102 @@ export default function HomePage() {
                       Configure monitor type, check intervals, and notifications after adding
                     </p>
           </div>
-          
+
+          {/* Quick Scrape */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Zap className="h-5 w-5 text-orange-500" />
+              <h3 className="text-xl font-semibold">Quick Scrape</h3>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              setScrapeError('')
+              setScrapeResult(null)
+              try {
+                const result = await triggerQuickScrape({ url: scrapeUrl, provider: scrapeProvider })
+                setScrapeResult(result)
+              } catch (err) {
+                setScrapeError(err instanceof Error ? err.message : 'Scrape failed')
+              }
+            }} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="text"
+                  placeholder="https://example.com"
+                  value={scrapeUrl}
+                  onChange={(e) => setScrapeUrl(e.target.value)}
+                  disabled={isScraping}
+                  className="flex-1"
+                />
+                <Select
+                  value={scrapeProvider}
+                  onChange={(e) => setScrapeProvider(e.target.value as 'firecrawl' | 'jina' | 'exa')}
+                  disabled={isScraping}
+                  className="w-36"
+                >
+                  <option value="jina">Jina</option>
+                  <option value="exa">Exa</option>
+                  <option value="firecrawl">Firecrawl</option>
+                </Select>
+                <Button
+                  type="submit"
+                  variant="orange"
+                  size="sm"
+                  disabled={isScraping || !scrapeUrl.trim()}
+                >
+                  {isScraping ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Scraping...
+                    </>
+                  ) : (
+                    'Scrape'
+                  )}
+                </Button>
+              </div>
+            </form>
+            {scrapeError && (
+              <p className="text-sm text-red-500 mt-2">{scrapeError}</p>
+            )}
+            {scrapeResult && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                      {scrapeResult.provider}
+                    </span>
+                    {scrapeResult.title && (
+                      <span className="font-medium text-sm truncate max-w-md">{scrapeResult.title}</span>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const blob = new Blob([scrapeResult.content], { type: 'text/markdown' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `${scrapeResult.title || 'scrape'}.md`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-1" />
+                    Download
+                  </Button>
+                </div>
+                {scrapeResult.description && (
+                  <p className="text-sm text-gray-600">{scrapeResult.description}</p>
+                )}
+                <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
+                  <pre className="text-sm whitespace-pre-wrap break-words font-mono">{scrapeResult.content}</pre>
+                </div>
+                <p className="text-xs text-gray-400">Scraped at {new Date(scrapeResult.scrapedAt).toLocaleString()}</p>
+              </div>
+            )}
+          </div>
+
           {/* Two Column Layout */}
           <div className="flex flex-col lg:grid lg:grid-cols-2 gap-6">
             {/* Left Column - Websites */}
@@ -607,7 +712,7 @@ export default function HomePage() {
                               onClick={async () => {
                                 const activeWebsites = websites.filter(w => w.isActive && !w.isPaused);
                                 for (const website of activeWebsites) {
-                                  await handleCheckNow(website._id);
+                                  await handleCheckNow(website.id);
                                 }
                               }}
                               className="gap-2"
@@ -671,7 +776,7 @@ export default function HomePage() {
                             return website.name.toLowerCase().includes(query) || 
                                    website.url.toLowerCase().includes(query)
                           })
-                          .sort((a, b) => b._creationTime - a._creationTime)
+                          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                         
                         // Pagination calculations
                         const totalPages = Math.ceil(filteredWebsites.length / ITEMS_PER_PAGE_WEBSITES)
@@ -707,25 +812,25 @@ export default function HomePage() {
                         return (
                           <>
                             {paginatedWebsites.map((website) => {
-                  const latestScrape = latestScrapes?.[website._id];
-                  const isProcessing = processingWebsites.has(website._id);
-                  const isDeleting = deletingWebsites.has(website._id);
+                  const latestScrape = latestScrapes?.[website.id];
+                  const isProcessing = processingWebsites.has(website.id);
+                  const isDeleting = deletingWebsites.has(website.id);
                   const hasChanged = latestScrape?.changeStatus === 'changed';
                   
                   return (
                     <div 
-                      key={website._id}
+                      key={website.id}
                       className={`p-4 hover:bg-gray-50 transition-colors cursor-pointer ${
                         isProcessing 
                           ? 'bg-orange-50' 
                           : isDeleting
                           ? 'bg-red-50 opacity-50'
-                          : selectedWebsiteId === website._id
+                          : selectedWebsiteId === website.id
                           ? 'bg-orange-50 border-l-4 border-orange-500'
                           : ''
                       }`}
                       onClick={() => {
-                        setSelectedWebsiteId(website._id)
+                        setSelectedWebsiteId(website.id)
                         setChangesPage(1) // Reset changes page when selecting a website
                       }}
                     >
@@ -789,10 +894,11 @@ export default function HomePage() {
                                   size="sm"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    pauseWebsite({ 
-                                      websiteId: website._id, 
-                                      isPaused: !website.isPaused 
-                                    })
+                                    fetch(`/api/data/websites/${website.id}/pause`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ isPaused: !website.isPaused }),
+                                    }).then(() => mutateWebsites())
                                   }}
                                   title={website.isPaused ? "Resume monitoring" : "Pause monitoring"}
                                   className="w-8 h-8 p-0"
@@ -808,7 +914,7 @@ export default function HomePage() {
                                   size="sm"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setEditingWebsiteId(website._id)
+                                    setEditingWebsiteId(website.id)
                                     setShowWebhookModal(true)
                                   }}
                                   title="Settings"
@@ -822,18 +928,18 @@ export default function HomePage() {
                                   onClick={async (e) => {
                                     e.stopPropagation();
                                     if (confirm(`Are you sure you want to delete "${website.name}"? This action cannot be undone.`)) {
-                                      setDeletingWebsites(prev => new Set([...prev, website._id]))
+                                      setDeletingWebsites(prev => new Set([...prev, website.id]))
                                       try {
-                                        console.log('Deleting website:', website._id, website.name)
-                                        await deleteWebsite({ websiteId: website._id })
-                                        console.log('Website deleted successfully:', website._id)
+                                        console.log('Deleting website:', website.id, website.name)
+                                        await fetch(`/api/data/websites/${website.id}`, { method: 'DELETE' }).then(() => mutateWebsites())
+                                        console.log('Website deleted successfully:', website.id)
                                       } catch (error) {
                                         console.error('Failed to delete website:', error)
                                         alert('Failed to delete website. Please try again.')
                                       } finally {
                                         setDeletingWebsites(prev => {
                                           const newSet = new Set(prev)
-                                          newSet.delete(website._id)
+                                          newSet.delete(website.id)
                                           return newSet
                                         })
                                       }
@@ -857,7 +963,7 @@ export default function HomePage() {
                             <div className="mt-2 flex items-center gap-2 text-orange-600">
                               <RefreshCw className="w-3 h-3 animate-spin" />
                               <span className="text-xs">
-                                {newlyCreatedWebsites.has(website._id) 
+                                {newlyCreatedWebsites.has(website.id) 
                                   ? 'Setting up monitoring...' 
                                   : 'Checking for changes...'
                                 }
@@ -889,7 +995,7 @@ export default function HomePage() {
                                 size="sm"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleCheckNow(website._id)
+                                  handleCheckNow(website.id)
                                 }}
                                 disabled={isProcessing}
                                 className="text-xs"
@@ -897,7 +1003,7 @@ export default function HomePage() {
                                 {isProcessing ? (
                                   <>
                                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                    {newlyCreatedWebsites.has(website._id) ? 'Setting up' : 'Checking'}
+                                    {newlyCreatedWebsites.has(website.id) ? 'Setting up' : 'Checking'}
                                   </>
                                 ) : (
                                   <>
@@ -998,7 +1104,7 @@ export default function HomePage() {
                   <div className="flex items-center gap-2 text-sm bg-orange-100 text-orange-800 px-3 py-1 rounded-full inline-flex w-fit">
                     <span>Filtered:</span>
                     <span className="font-medium">
-                      {websites.find(w => w._id === selectedWebsiteId)?.name || 'Unknown'}
+                      {websites.find(w => w.id === selectedWebsiteId)?.name || 'Unknown'}
                     </span>
                     <button
                       onClick={() => {
@@ -1050,7 +1156,7 @@ export default function HomePage() {
                     const websiteMatch = !selectedWebsiteId || scrape.websiteId === selectedWebsiteId;
                     const filterMatch = checkLogFilter === 'all' || 
                       (checkLogFilter === 'changed' && scrape.changeStatus === 'changed') ||
-                      (checkLogFilter === 'meaningful' && scrape.aiAnalysis?.isMeaningfulChange === true);
+                      (checkLogFilter === 'meaningful' && scrape.aiIsMeaningfulChange === true);
                     
                     // Search filter
                     const searchMatch = !changesSearchQuery || 
@@ -1089,7 +1195,7 @@ export default function HomePage() {
                   return (
                     <>
                       {paginatedChanges.map((scrape) => (
-                    <div key={scrape._id} className="border-b hover:bg-gray-50">
+                    <div key={scrape.id} className="border-b hover:bg-gray-50">
                       <div className="p-3">
                         <div className="flex items-center gap-3">
                           {/* Website favicon */}
@@ -1120,32 +1226,32 @@ export default function HomePage() {
                           </div>
 
                           <div className="flex items-center gap-3 flex-shrink-0">
-                            {scrape.aiAnalysis && (
+                            {scrape.aiMeaningfulChangeScore != null && (
                               <div className="relative group">
                                 <Bot 
                                   className={`h-5 w-5 cursor-help ${
-                                    scrape.aiAnalysis.isMeaningfulChange
+                                    scrape.aiIsMeaningfulChange
                                       ? 'text-green-600'
                                       : 'text-red-500'
                                   }`}
                                 />
                                 <div className="absolute bottom-full right-0 mb-2 p-3 bg-gray-900 text-white text-sm rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10 w-80">
                                   <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
-                                  <div className={`font-medium mb-1 ${scrape.aiAnalysis.isMeaningfulChange ? 'text-green-400' : 'text-red-400'}`}>
-                                    {scrape.aiAnalysis.meaningfulChangeScore}% {scrape.aiAnalysis.isMeaningfulChange ? 'Meaningful' : 'Not Meaningful'}
+                                  <div className={`font-medium mb-1 ${scrape.aiIsMeaningfulChange ? 'text-green-400' : 'text-red-400'}`}>
+                                    {scrape.aiMeaningfulChangeScore}% {scrape.aiIsMeaningfulChange ? 'Meaningful' : 'Not Meaningful'}
                                   </div>
-                                  <div className="text-gray-300 whitespace-normal">{scrape.aiAnalysis.reasoning}</div>
+                                  <div className="text-gray-300 whitespace-normal">{scrape.aiReasoning}</div>
                                 </div>
                               </div>
                             )}
                             <div className="flex items-center gap-1">
-                              {scrape.changeStatus === 'changed' && scrape.diff ? (
+                              {scrape.changeStatus === 'changed' && scrape.diffText ? (
                                 <Button
                                   variant="code"
                                   size="sm"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setViewingSpecificScrape(scrape._id);
+                                    setViewingSpecificScrape(scrape.id);
                                   }}
                                   className="w-7 h-7 p-0"
                                 >
@@ -1160,7 +1266,7 @@ export default function HomePage() {
                                   size="sm"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    downloadMarkdown(scrape.markdown, scrape.websiteName, scrape.scrapedAt)
+                                    downloadMarkdown(scrape.markdown, scrape.websiteName || 'website', scrape.scrapedAt)
                                   }}
                                   className="w-7 h-7 p-0"
                                 >
@@ -1269,7 +1375,7 @@ export default function HomePage() {
                             onClick={async () => {
                               const activeWebsites = websites.filter(w => w.isActive && !w.isPaused);
                               for (const website of activeWebsites) {
-                                await handleCheckNow(website._id);
+                                await handleCheckNow(website.id);
                               }
                             }}
                             className="gap-2"
@@ -1313,13 +1419,13 @@ export default function HomePage() {
                           return website.name.toLowerCase().includes(query) || 
                                  website.url.toLowerCase().includes(query)
                         }).map((website) => {
-                          const latestScrape = latestScrapes ? latestScrapes[website._id] : null;
+                          const latestScrape = latestScrapes ? latestScrapes[website.id] : null;
                           const hasChanged = latestScrape?.changeStatus === 'changed';
-                          const isProcessing = processingWebsites.has(website._id);
-                          const isDeleting = deletingWebsites.has(website._id);
+                          const isProcessing = processingWebsites.has(website.id);
+                          const isDeleting = deletingWebsites.has(website.id);
                           
                           return (
-                            <div key={website._id} className="p-6 hover:bg-gray-50">
+                            <div key={website.id} className="p-6 hover:bg-gray-50">
                               <div className="flex items-center gap-4">
                                 {/* Website favicon */}
                                 <div className="flex-shrink-0">
@@ -1380,10 +1486,11 @@ export default function HomePage() {
                                         size="sm"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          pauseWebsite({ 
-                                            websiteId: website._id, 
-                                            isPaused: !website.isPaused 
-                                          })
+                                          fetch(`/api/data/websites/${website.id}/pause`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ isPaused: !website.isPaused }),
+                                          }).then(() => mutateWebsites())
                                         }}
                                         title={website.isPaused ? "Resume monitoring" : "Pause monitoring"}
                                         className="w-8 h-8 p-0"
@@ -1399,7 +1506,7 @@ export default function HomePage() {
                                         size="sm"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setEditingWebsiteId(website._id)
+                                          setEditingWebsiteId(website.id)
                                           setShowWebhookModal(true)
                                         }}
                                         title="Settings"
@@ -1413,16 +1520,16 @@ export default function HomePage() {
                                         onClick={async (e) => {
                                           e.stopPropagation();
                                           if (confirm(`Are you sure you want to delete "${website.name}"? This action cannot be undone.`)) {
-                                            setDeletingWebsites(prev => new Set([...prev, website._id]))
+                                            setDeletingWebsites(prev => new Set([...prev, website.id]))
                                             try {
-                                              await deleteWebsite({ websiteId: website._id })
+                                              await fetch(`/api/data/websites/${website.id}`, { method: 'DELETE' }).then(() => mutateWebsites())
                                             } catch (error) {
                                               console.error('Failed to delete website:', error)
                                               alert('Failed to delete website. Please try again.')
                                             } finally {
                                               setDeletingWebsites(prev => {
                                                 const newSet = new Set(prev)
-                                                newSet.delete(website._id)
+                                                newSet.delete(website.id)
                                                 return newSet
                                               })
                                             }
@@ -1445,10 +1552,10 @@ export default function HomePage() {
                                   {(!website.isPaused && latestScrape) && (
                                     <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
                                       <div className="flex items-center gap-3">
-                                        {(newlyCreatedWebsites.has(website._id) || isProcessing) ? (
+                                        {(newlyCreatedWebsites.has(website.id) || isProcessing) ? (
                                           <div className="flex items-center gap-1">
                                             <Loader2 className="h-3 w-3 animate-spin" />
-                                            <span>{newlyCreatedWebsites.has(website._id) ? 'Setting up monitoring...' : 'Checking for changes...'}</span>
+                                            <span>{newlyCreatedWebsites.has(website.id) ? 'Setting up monitoring...' : 'Checking for changes...'}</span>
                                           </div>
                                         ) : (
                                           <div className="flex items-center gap-1">
@@ -1473,7 +1580,7 @@ export default function HomePage() {
                                         size="sm"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          handleCheckNow(website._id)
+                                          handleCheckNow(website.id)
                                         }}
                                         disabled={isProcessing}
                                         className="text-xs"
@@ -1481,7 +1588,7 @@ export default function HomePage() {
                                         {isProcessing ? (
                                           <>
                                             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                            {newlyCreatedWebsites.has(website._id) ? 'Setting up' : 'Checking'}
+                                            {newlyCreatedWebsites.has(website.id) ? 'Setting up' : 'Checking'}
                                           </>
                                         ) : (
                                           <>
@@ -1536,7 +1643,7 @@ export default function HomePage() {
                       <div className="flex items-center gap-2 text-sm bg-orange-100 text-orange-800 px-3 py-1 rounded-full inline-flex w-fit mb-4">
                         <span>Filtered:</span>
                         <span className="font-medium">
-                          {websites.find(w => w._id === selectedWebsiteId)?.name || 'Unknown'}
+                          {websites.find(w => w.id === selectedWebsiteId)?.name || 'Unknown'}
                         </span>
                         <button
                           onClick={() => {
@@ -1583,7 +1690,7 @@ export default function HomePage() {
                           const websiteMatch = !selectedWebsiteId || scrape.websiteId === selectedWebsiteId;
                           const filterMatch = checkLogFilter === 'all' || 
                       (checkLogFilter === 'changed' && scrape.changeStatus === 'changed') ||
-                      (checkLogFilter === 'meaningful' && scrape.aiAnalysis?.isMeaningfulChange === true);
+                      (checkLogFilter === 'meaningful' && scrape.aiIsMeaningfulChange === true);
                           const searchMatch = !changesSearchQuery || 
                             scrape.websiteName?.toLowerCase().includes(changesSearchQuery.toLowerCase()) ||
                             scrape.title?.toLowerCase().includes(changesSearchQuery.toLowerCase()) ||
@@ -1592,7 +1699,7 @@ export default function HomePage() {
                         });
                         
                         return filteredHistory.map((scrape) => (
-                          <div key={scrape._id} className="border-b hover:bg-gray-50">
+                          <div key={scrape.id} className="border-b hover:bg-gray-50">
                             <div className="p-3">
                               <div className="flex items-center gap-3">
                                 {/* Website favicon */}
@@ -1623,32 +1730,32 @@ export default function HomePage() {
                                 </div>
 
                                 <div className="flex items-center gap-3 flex-shrink-0">
-                                  {scrape.aiAnalysis && (
+                                  {scrape.aiMeaningfulChangeScore != null && (
                                     <div className="relative group">
                                       <Bot 
                                         className={`h-5 w-5 cursor-help ${
-                                          scrape.aiAnalysis.isMeaningfulChange
+                                          scrape.aiIsMeaningfulChange
                                             ? 'text-green-600'
                                             : 'text-red-500'
                                         }`}
                                       />
                                       <div className="absolute bottom-full right-0 mb-2 p-3 bg-gray-900 text-white text-sm rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10 w-80">
                                         <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
-                                        <div className={`font-medium mb-1 ${scrape.aiAnalysis.isMeaningfulChange ? 'text-green-400' : 'text-red-400'}`}>
-                                          {scrape.aiAnalysis.meaningfulChangeScore}% {scrape.aiAnalysis.isMeaningfulChange ? 'Meaningful' : 'Not Meaningful'}
+                                        <div className={`font-medium mb-1 ${scrape.aiIsMeaningfulChange ? 'text-green-400' : 'text-red-400'}`}>
+                                          {scrape.aiMeaningfulChangeScore}% {scrape.aiIsMeaningfulChange ? 'Meaningful' : 'Not Meaningful'}
                                         </div>
-                                        <div className="text-gray-300 whitespace-normal">{scrape.aiAnalysis.reasoning}</div>
+                                        <div className="text-gray-300 whitespace-normal">{scrape.aiReasoning}</div>
                                       </div>
                                     </div>
                                   )}
                                   <div className="flex items-center gap-1">
-                                    {scrape.changeStatus === 'changed' && scrape.diff ? (
+                                    {scrape.changeStatus === 'changed' && scrape.diffText ? (
                                       <Button
                                         variant="code"
                                         size="sm"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setViewingSpecificScrape(scrape._id);
+                                          setViewingSpecificScrape(scrape.id);
                                         }}
                                         className="w-7 h-7 p-0"
                                       >
@@ -1663,7 +1770,7 @@ export default function HomePage() {
                                         size="sm"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          downloadMarkdown(scrape.markdown, scrape.websiteName, scrape.scrapedAt)
+                                          downloadMarkdown(scrape.markdown, scrape.websiteName || 'website', scrape.scrapedAt)
                                         }}
                                         className="w-7 h-7 p-0"
                                       >
@@ -1711,11 +1818,11 @@ export default function HomePage() {
         >
           <div className="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
             {(() => {
-              const scrape = allScrapeHistory.find(s => s._id === viewingSpecificScrape);
+              const scrape = allScrapeHistory.find(s => s.id === viewingSpecificScrape);
               if (!scrape) return null;
               
               // Parse the diff text into lines
-              const diffLines = scrape.diff?.text?.split('\n') || [];
+              const diffLines = scrape.diffText?.split('\n') || [];
               
               return (
                 <>
@@ -1726,7 +1833,7 @@ export default function HomePage() {
                     </p>
                   </div>
                   <div className="overflow-y-auto max-h-[70vh] bg-gray-900">
-                    {scrape.diff && scrape.diff.text ? (
+                    {scrape.diffText ? (
                       <div className="p-4">
                         <div className="font-mono text-sm text-gray-100">
                           {diffLines.map((line, index) => {
@@ -1825,25 +1932,28 @@ export default function HomePage() {
               // Create new website with configured settings
               setIsAdding(true)
               try {
-                const websiteId = await createWebsite({
+                const website = await createWebsiteTrigger({
                   url: pendingWebsite.url,
                   name: pendingWebsite.name,
                   checkInterval: config.checkInterval || 60,
                   notificationPreference: config.notificationPreference,
                   webhookUrl: config.webhookUrl,
                   monitorType: config.monitorType,
+                  scrapeProvider: config.scrapeProvider,
                   crawlLimit: config.crawlLimit,
                   crawlDepth: config.crawlDepth
                 })
-                
+                const websiteId = website.id
+
                 // Add to processing state to show initial setup is happening
                 setProcessingWebsites(prev => new Set([...prev, websiteId]))
                 setNewlyCreatedWebsites(prev => new Set([...prev, websiteId]))
-                
+                mutateWebsites()
+
                 // If checkNow is true, trigger an immediate check
                 if (config.checkNow) {
                   try {
-                    await triggerScrape({ websiteId })
+                    await fetch(`/api/data/websites/${websiteId}/scrape`, { method: 'POST' })
                   } catch (error) {
                     console.error('Failed to trigger initial check:', error)
                   }
@@ -1871,15 +1981,20 @@ export default function HomePage() {
               }
             } else if (editingWebsiteId) {
               // Update existing website
-              await updateWebsite({
-                websiteId: editingWebsiteId as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-                notificationPreference: config.notificationPreference,
-                webhookUrl: config.webhookUrl,
-                checkInterval: config.checkInterval,
-                monitorType: config.monitorType,
-                crawlLimit: config.crawlLimit,
-                crawlDepth: config.crawlDepth
+              await fetch(`/api/data/websites/${editingWebsiteId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  notificationPreference: config.notificationPreference,
+                  webhookUrl: config.webhookUrl,
+                  checkInterval: config.checkInterval,
+                  monitorType: config.monitorType,
+                  scrapeProvider: config.scrapeProvider,
+                  crawlLimit: config.crawlLimit,
+                  crawlDepth: config.crawlDepth,
+                }),
               })
+              mutateWebsites()
             }
             setShowWebhookModal(false)
             setEditingWebsiteId(null)
@@ -1887,21 +2002,23 @@ export default function HomePage() {
           }}
           initialConfig={
             editingWebsiteId ? {
-              notificationPreference: websites?.find(w => w._id === editingWebsiteId)?.notificationPreference || 'none',
-              webhookUrl: websites?.find(w => w._id === editingWebsiteId)?.webhookUrl,
-              checkInterval: websites?.find(w => w._id === editingWebsiteId)?.checkInterval || 60,
-              monitorType: websites?.find(w => w._id === editingWebsiteId)?.monitorType || 'single_page',
-              crawlLimit: websites?.find(w => w._id === editingWebsiteId)?.crawlLimit || 5,
-              crawlDepth: websites?.find(w => w._id === editingWebsiteId)?.crawlDepth || 3
+              notificationPreference: (websites?.find(w => w.id === editingWebsiteId)?.notificationPreference || 'none') as 'email' | 'webhook' | 'both' | 'none',
+              webhookUrl: websites?.find(w => w.id === editingWebsiteId)?.webhookUrl ?? undefined,
+              checkInterval: websites?.find(w => w.id === editingWebsiteId)?.checkInterval || 60,
+              monitorType: (websites?.find(w => w.id === editingWebsiteId)?.monitorType || 'single_page') as 'single_page' | 'full_site',
+              scrapeProvider: (websites?.find(w => w.id === editingWebsiteId)?.scrapeProvider || 'firecrawl') as 'firecrawl' | 'jina' | 'exa',
+              crawlLimit: websites?.find(w => w.id === editingWebsiteId)?.crawlLimit || 5,
+              crawlDepth: websites?.find(w => w.id === editingWebsiteId)?.crawlDepth || 3
             } : {
               notificationPreference: 'none',
               checkInterval: 60,
               monitorType: 'single_page',
+              scrapeProvider: 'firecrawl',
               crawlLimit: 5,
               crawlDepth: 3
             }
           }
-          websiteName={pendingWebsite?.name || websites?.find(w => w._id === editingWebsiteId)?.name || 'Website'}
+          websiteName={pendingWebsite?.name || websites?.find(w => w.id === editingWebsiteId)?.name || 'Website'}
         />
       )}
       

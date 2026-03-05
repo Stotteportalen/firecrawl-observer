@@ -40,6 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# prisma generated client
+/.generated
+
 # JWT keys
 jwt-key*.txt
 

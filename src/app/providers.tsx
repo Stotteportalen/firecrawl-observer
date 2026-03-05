@@ -1,18 +1,24 @@
 'use client'
 
-import { ConvexReactClient } from "convex/react"
-import { ConvexAuthProvider } from "@convex-dev/auth/react"
 import { ReactNode } from "react"
+import { SWRConfig } from "swr"
 import { ToastProvider } from "@/hooks/use-toast"
 
-const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
+const fetcher = (url: string) => fetch(url).then(res => {
+  if (!res.ok) throw new Error('Request failed');
+  return res.json();
+});
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <ConvexAuthProvider client={convex}>
+    <SWRConfig value={{
+      fetcher,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+    }}>
       <ToastProvider>
         {children}
       </ToastProvider>
-    </ConvexAuthProvider>
+    </SWRConfig>
   )
 }
