@@ -6,23 +6,24 @@ import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useRouter } from 'next/navigation'
-import { useConvexAuth, useQuery, useMutation } from "convex/react"
-import { api } from "../../../convex/_generated/api"
+import { useSession } from '@/lib/auth-client'
+import { useWebhookPayloads } from '@/hooks/use-data'
+import { mutate } from 'swr'
 import { Loader2, ArrowLeft, Webhook, Copy, Check, Trash2, CheckCircle, XCircle, Clock, AlertCircle, HelpCircle, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
 export default function WebhookPlaygroundPage() {
   const router = useRouter()
-  const { isLoading: authLoading, isAuthenticated } = useConvexAuth()
+  const { data: session, isPending: authLoading } = useSession()
+  const isAuthenticated = !!session
   const [copied, setCopied] = useState(false)
   const [expandedPayload, setExpandedPayload] = useState<string | null>(null)
   const [previousCount, setPreviousCount] = useState(0)
   const [newWebhooks, setNewWebhooks] = useState<Set<string>>(new Set())
-  
-  // Convex queries and mutations
-  const webhookPayloads = useQuery(api.webhookPlayground.getWebhookPayloads, { limit: 50 })
-  const clearPayloads = useMutation(api.webhookPlayground.clearWebhookPayloads)
-  
+
+  // SWR data hooks
+  const { data: webhookPayloads, isLoading: payloadsLoading } = useWebhookPayloads()
+
   // Track new webhooks
   useEffect(() => {
     if (webhookPayloads) {
@@ -32,10 +33,10 @@ export default function WebhookPlaygroundPage() {
         const newIds = new Set<string>()
         const numNew = webhookPayloads.length - previousCount
         for (let i = 0; i < numNew && i < webhookPayloads.length; i++) {
-          newIds.add(webhookPayloads[i]._id)
+          newIds.add(webhookPayloads[i].id)
         }
         setNewWebhooks(newIds)
-        
+
         // Clear the highlight after 3 seconds
         setTimeout(() => {
           setNewWebhooks(new Set())
@@ -44,15 +45,15 @@ export default function WebhookPlaygroundPage() {
       setPreviousCount(webhookPayloads.length)
     }
   }, [webhookPayloads, previousCount])
-  
+
   // Redirect if not authenticated
   if (!authLoading && !isAuthenticated) {
     router.push('/')
     return null
   }
-  
+
   // Show loading while auth is loading
-  if (authLoading || webhookPayloads === undefined) {
+  if (authLoading || payloadsLoading || !webhookPayloads) {
     return (
       <Layout>
         <Header />
@@ -71,7 +72,7 @@ export default function WebhookPlaygroundPage() {
     )
   }
 
-  const webhookUrl = typeof window !== 'undefined' 
+  const webhookUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/api/test-webhook`
     : 'Loading...'
 
@@ -81,9 +82,10 @@ export default function WebhookPlaygroundPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const formatTimeAgo = (timestamp: number) => {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000)
-    
+  const formatTimeAgo = (timestamp: string | Date | number) => {
+    const time = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime()
+    const seconds = Math.floor((Date.now() - time) / 1000)
+
     if (seconds < 60) return 'Just now'
     if (seconds < 3600) return `${Math.floor(seconds / 60)} mins ago`
     if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`
@@ -92,14 +94,15 @@ export default function WebhookPlaygroundPage() {
 
   const handleClearAll = async () => {
     if (confirm('Are you sure you want to clear all webhook payloads?')) {
-      await clearPayloads()
+      await fetch('/api/data/webhook-playground', { method: 'DELETE' })
+      mutate('/api/data/webhook-playground')
     }
   }
-  
+
   return (
     <Layout>
       <Header />
-      
+
       <MainContent maxWidth="7xl" className="py-12">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center gap-4 mb-8">
@@ -111,7 +114,7 @@ export default function WebhookPlaygroundPage() {
               Webhook Playground
             </h1>
           </div>
-          
+
           {/* Webhook URL Section */}
           <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
@@ -131,7 +134,7 @@ export default function WebhookPlaygroundPage() {
                 </div>
               </div>
             </div>
-            
+
             {webhookUrl.includes('localhost') && (
               <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
                 <div className="flex items-start gap-3">
@@ -139,7 +142,7 @@ export default function WebhookPlaygroundPage() {
                   <div>
                     <p className="text-sm font-medium text-black">Localhost URLs won&apos;t work!</p>
                     <p className="text-sm text-black mt-1">
-                      Convex runs in the cloud and cannot access localhost. Use one of these options:
+                      The server runs in the cloud and cannot access localhost. Use one of these options:
                     </p>
                     <ul className="text-sm text-black mt-2 space-y-1 list-disc list-inside">
                       <li>Use <a href="https://ngrok.com" target="_blank" className="underline font-medium">ngrok</a> to expose your local server: <code className="bg-orange-100 px-1 rounded">ngrok http 3000</code></li>
@@ -150,7 +153,7 @@ export default function WebhookPlaygroundPage() {
                 </div>
               </div>
             )}
-            
+
             <div className="flex items-center gap-2">
               <Input
                 value={webhookUrl}
@@ -218,10 +221,10 @@ export default function WebhookPlaygroundPage() {
             ) : (
               <div className="divide-y">
                 {webhookPayloads.map((payload) => (
-                  <div 
-                    key={payload._id} 
+                  <div
+                    key={payload.id}
                     className={`p-4 hover:bg-gray-50 transition-all ${
-                      newWebhooks.has(payload._id) ? 'bg-orange-50 border-l-4 border-orange-500' : ''
+                      newWebhooks.has(payload.id) ? 'bg-orange-50 border-l-4 border-orange-500' : ''
                     }`}
                   >
                     <div className="flex items-start justify-between">
@@ -234,30 +237,33 @@ export default function WebhookPlaygroundPage() {
                               <XCircle className="h-5 w-5 text-orange-500" />
                             )}
                             <span className="font-medium">
-                              {payload.payload?.event || 'Webhook Event'}
+                              {(payload.payload?.event as string) || 'Webhook Event'}
                             </span>
                             <span className="text-sm text-gray-500 flex items-center gap-1">
                               <Clock className="h-3 w-3" />
                               {formatTimeAgo(payload.receivedAt)}
                             </span>
-                            {newWebhooks.has(payload._id) && (
+                            {newWebhooks.has(payload.id) && (
                               <span className="text-xs bg-orange-500 text-white px-2 py-1 rounded-full">
                                 New
                               </span>
                             )}
                           </div>
                           {/* Website URL on the right */}
-                          {payload.payload?.website?.url && (
-                            <a 
-                              href={payload.payload.website.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-sm text-black hover:text-gray-700 hover:underline flex items-center gap-1"
-                            >
-                              {payload.payload.website.url}
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
+                          {(() => {
+                            const websiteUrl = (payload.payload?.website as Record<string, unknown> | undefined)?.url as string | undefined;
+                            return websiteUrl ? (
+                              <a
+                                href={websiteUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-black hover:text-gray-700 hover:underline flex items-center gap-1"
+                              >
+                                {websiteUrl}
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ) : null;
+                          })()}
                         </div>
 
                         {/* JSON Payload */}
@@ -270,22 +276,22 @@ export default function WebhookPlaygroundPage() {
                                 size="sm"
                                 className="h-6 px-2 text-xs"
                                 onClick={() => setExpandedPayload(
-                                  expandedPayload === payload._id ? null : payload._id
+                                  expandedPayload === payload.id ? null : payload.id
                                 )}
                               >
-                                {expandedPayload === payload._id ? 'Collapse' : 'Expand'}
+                                {expandedPayload === payload.id ? 'Collapse' : 'Expand'}
                               </Button>
                             </div>
                             <div className="p-3">
-                              <div className={expandedPayload === payload._id ? "overflow-y-auto max-h-96" : "overflow-hidden max-h-48"}>
+                              <div className={expandedPayload === payload.id ? "overflow-y-auto max-h-96" : "overflow-hidden max-h-48"}>
                                 <pre className="text-xs whitespace-pre-wrap break-all">
                                   <code>
-                                    {expandedPayload === payload._id 
+                                    {expandedPayload === payload.id
                                       ? JSON.stringify(payload.payload, null, 2)
                                       : JSON.stringify(payload.payload, null, 2)
                                           .split('\n')
                                           .slice(0, 12)
-                                          .join('\n') + 
+                                          .join('\n') +
                                           (JSON.stringify(payload.payload, null, 2).split('\n').length > 12 ? '\n  ...' : '')
                                     }
                                   </code>
@@ -293,9 +299,9 @@ export default function WebhookPlaygroundPage() {
                               </div>
                             </div>
                           </div>
-                          
+
                           {/* Headers - only show when expanded */}
-                          {expandedPayload === payload._id && payload.headers && (
+                          {expandedPayload === payload.id && payload.headers && (
                             <details className="mt-3">
                               <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-800">
                                 Request Headers
@@ -320,7 +326,7 @@ export default function WebhookPlaygroundPage() {
 
         </div>
       </MainContent>
-      
+
       <Footer />
     </Layout>
   )

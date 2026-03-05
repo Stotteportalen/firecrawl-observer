@@ -7,24 +7,25 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, Copy, Check, Code, Globe, Webhook, Clock, Network, BarChart3, Key, Plus, Trash2, Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { useQuery, useMutation, useConvexAuth } from "convex/react"
-import { api } from "../../../convex/_generated/api"
-import { Id } from "../../../convex/_generated/dataModel"
+import { useSession } from '@/lib/auth-client'
+import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '@/hooks/use-data'
+import { mutate } from 'swr'
 
 export default function ApiDocsPage() {
-  const { isAuthenticated } = useConvexAuth()
+  const { data: session } = useSession()
+  const isAuthenticated = !!session
   const [copiedSection, setCopiedSection] = useState<string | null>(null)
-  
+
   // API Key state
   const [showNewApiKey, setShowNewApiKey] = useState(false)
   const [newApiKeyName, setNewApiKeyName] = useState('')
   const [createdApiKey, setCreatedApiKey] = useState<string | null>(null)
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null)
-  
+
   // API Key queries and mutations
-  const apiKeys = useQuery(api.apiKeys.getUserApiKeys) || []
-  const createApiKey = useMutation(api.apiKeys.createApiKey)
-  const deleteApiKey = useMutation(api.apiKeys.deleteApiKey)
+  const { data: apiKeys = [] } = useApiKeys()
+  const { trigger: createApiKeyTrigger } = useCreateApiKey()
+  const { trigger: deleteApiKeyTrigger } = useDeleteApiKey()
 
   const copyToClipboard = (text: string, section: string) => {
     navigator.clipboard.writeText(text)
@@ -36,7 +37,8 @@ export default function ApiDocsPage() {
     if (!newApiKeyName.trim()) return
     
     try {
-      const result = await createApiKey({ name: newApiKeyName })
+      const result = await createApiKeyTrigger({ name: newApiKeyName })
+      mutate('/api/data/api-keys')
       setCreatedApiKey(result.key)
       setNewApiKeyName('')
       setShowNewApiKey(false)
@@ -55,7 +57,8 @@ export default function ApiDocsPage() {
     if (!confirm('Are you sure you want to delete this API key? This action cannot be undone.')) return
     
     try {
-      await deleteApiKey({ keyId: keyId as Id<"apiKeys"> })
+      await deleteApiKeyTrigger({ id: keyId })
+      mutate('/api/data/api-keys')
     } catch (error) {
       console.error('Failed to delete API key:', error)
     }
@@ -290,9 +293,9 @@ export default function ApiDocsPage() {
             
             {apiKeys && apiKeys.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {apiKeys.map((key) => (
+                {apiKeys.map((key: { id: string; name: string; keyPreview: string; createdAt: string; lastUsed?: string }) => (
                   <div
-                    key={key._id}
+                    key={key.id}
                     className="border rounded-lg p-3 hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-start justify-between mb-2">
@@ -300,7 +303,7 @@ export default function ApiDocsPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleDeleteApiKey(key._id)}
+                        onClick={() => handleDeleteApiKey(key.id)}
                         className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50 border-0"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -313,10 +316,10 @@ export default function ApiDocsPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleCopyApiKey(key.keyPreview, key._id)}
+                        onClick={() => handleCopyApiKey(key.keyPreview, key.id)}
                         className="h-6 w-6 p-0 border-0"
                       >
-                        {copiedKeyId === key._id ? (
+                        {copiedKeyId === key.id ? (
                           <Check className="h-3 w-3 text-green-600" />
                         ) : (
                           <Copy className="h-3 w-3" />

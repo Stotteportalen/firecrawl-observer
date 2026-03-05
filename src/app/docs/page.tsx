@@ -44,7 +44,7 @@ export default function DocsPage() {
             <div className="prose prose-gray max-w-none">
               <p className="text-lg text-gray-600 mb-6">
                 Firecrawl Observer is a powerful website monitoring tool that helps you track changes on any website. 
-                Built with Next.js, Convex, and the Firecrawl API, it provides real-time monitoring with customizable 
+                Built with Next.js, PostgreSQL, and the Firecrawl API, it provides real-time monitoring with customizable 
                 intervals, visual diff viewing, and multiple notification options.
               </p>
               

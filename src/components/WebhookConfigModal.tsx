@@ -15,6 +15,7 @@ interface WebhookConfigModalProps {
     webhookUrl?: string
     checkInterval?: number
     monitorType?: 'single_page' | 'full_site'
+    scrapeProvider?: 'firecrawl' | 'jina' | 'exa'
     crawlLimit?: number
     crawlDepth?: number
     checkNow?: boolean
@@ -24,6 +25,7 @@ interface WebhookConfigModalProps {
     webhookUrl?: string
     checkInterval?: number
     monitorType?: 'single_page' | 'full_site'
+    scrapeProvider?: 'firecrawl' | 'jina' | 'exa'
     crawlLimit?: number
     crawlDepth?: number
   }
@@ -35,6 +37,7 @@ export function WebhookConfigModal({ isOpen, onClose, onSave, initialConfig, web
   const [webhookUrl, setWebhookUrl] = useState(initialConfig?.webhookUrl || '')
   const [checkInterval, setCheckInterval] = useState(String(initialConfig?.checkInterval || 60))
   const [monitorType, setMonitorType] = useState(initialConfig?.monitorType || 'single_page')
+  const [scrapeProvider, setScrapeProvider] = useState<'firecrawl' | 'jina' | 'exa'>(initialConfig?.scrapeProvider || 'firecrawl')
   const [crawlLimit, setCrawlLimit] = useState(String(initialConfig?.crawlLimit || 5))
   const [crawlDepth, setCrawlDepth] = useState(String(initialConfig?.crawlDepth || 3))
   const [copied, setCopied] = useState(false)
@@ -46,11 +49,12 @@ export function WebhookConfigModal({ isOpen, onClose, onSave, initialConfig, web
       webhookUrl: (notificationPreference === 'webhook' || notificationPreference === 'both') ? webhookUrl : undefined,
       checkInterval: parseInt(checkInterval),
       monitorType: monitorType as 'single_page' | 'full_site',
+      scrapeProvider,
       crawlLimit: monitorType === 'full_site' ? parseInt(crawlLimit) : undefined,
       crawlDepth: monitorType === 'full_site' ? parseInt(crawlDepth) : undefined,
       checkNow: checkNow
     })
-  }, [notificationPreference, webhookUrl, checkInterval, monitorType, crawlLimit, crawlDepth, checkNow, onSave])
+  }, [notificationPreference, webhookUrl, checkInterval, monitorType, scrapeProvider, crawlLimit, crawlDepth, checkNow, onSave])
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -207,6 +211,33 @@ export function WebhookConfigModal({ isOpen, onClose, onSave, initialConfig, web
                   ? 'Monitor changes on a specific page URL' 
                   : 'Crawl and monitor multiple pages across the entire website'}
               </p>
+            </div>
+
+            {/* Scrape Provider */}
+            <div className="mb-4">
+              <Label htmlFor="scrape-provider">Scrape Provider</Label>
+              <Select
+                id="scrape-provider"
+                value={scrapeProvider}
+                onChange={(e) => setScrapeProvider(e.target.value as 'firecrawl' | 'jina' | 'exa')}
+                className="w-full mt-1"
+              >
+                <option value="firecrawl">Firecrawl</option>
+                <option value="jina">Jina</option>
+                <option value="exa">Exa</option>
+              </Select>
+              <p className="text-sm text-gray-500 mt-1">
+                {scrapeProvider === 'firecrawl'
+                  ? 'Uses Firecrawl with built-in change tracking and git-diff'
+                  : scrapeProvider === 'jina'
+                    ? 'Uses Jina Reader for fast, free scraping with our own change detection'
+                    : 'Uses Exa for content extraction (requires EXA_API_KEY)'}
+              </p>
+              {monitorType === 'full_site' && scrapeProvider !== 'firecrawl' && (
+                <p className="text-sm text-amber-600 mt-1">
+                  Full-site crawling is only supported with Firecrawl. This will fall back to single-page scraping.
+                </p>
+              )}
             </div>
 
             {/* Crawl Configuration */}

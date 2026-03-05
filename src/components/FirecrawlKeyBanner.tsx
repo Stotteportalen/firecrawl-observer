@@ -4,8 +4,8 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AlertCircle, Key, X, Check, Settings } from 'lucide-react'
-import { useMutation } from 'convex/react'
-import { api } from '../../convex/_generated/api'
+import { useSetFirecrawlKey } from '@/hooks/use-data'
+import { mutate } from 'swr'
 import Link from 'next/link'
 
 export function FirecrawlKeyBanner() {
@@ -13,8 +13,8 @@ export function FirecrawlKeyBanner() {
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
-  
-  const setFirecrawlKey = useMutation(api.firecrawlKeys.setFirecrawlKey)
+
+  const { trigger: setFirecrawlKeyTrigger } = useSetFirecrawlKey()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -22,7 +22,8 @@ export function FirecrawlKeyBanner() {
     setSuccess(false)
 
     try {
-      await setFirecrawlKey({ apiKey })
+      await setFirecrawlKeyTrigger({ apiKey })
+      mutate('/api/data/firecrawl-key')
       setSuccess(true)
       setTimeout(() => {
         setShowForm(false)
@@ -43,9 +44,9 @@ export function FirecrawlKeyBanner() {
                 <h3 className="text-sm font-medium text-orange-900 mb-1">Add Your Firecrawl Auth</h3>
                 <p className="text-sm text-orange-700">
                   Get your API key from{' '}
-                  <a 
-                    href="https://www.firecrawl.dev/app/api-keys" 
-                    target="_blank" 
+                  <a
+                    href="https://www.firecrawl.dev/app/api-keys"
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="underline hover:text-orange-800"
                   >
@@ -66,7 +67,7 @@ export function FirecrawlKeyBanner() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            
+
             <div className="flex gap-2">
               <Input
                 type="password"
@@ -87,7 +88,7 @@ export function FirecrawlKeyBanner() {
                 )}
               </Button>
             </div>
-            
+
             {error && (
               <p className="text-sm text-red-600">{error}</p>
             )}

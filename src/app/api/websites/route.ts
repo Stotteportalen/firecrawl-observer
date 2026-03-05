@@ -1,32 +1,40 @@
-import { NextRequest, NextResponse } from 'next/server'
-
-const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL?.replace('.cloud', '.site') || ''
+import { NextRequest, NextResponse } from 'next/server';
+import { requireApiKeyUser } from '@/lib/api-auth';
+import { createWebsite } from '@/lib/services/websites';
 
 export async function POST(request: NextRequest) {
   try {
-    // Forward the request to Convex HTTP endpoint
-    const response = await fetch(`${CONVEX_URL}/api/create-websites`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': request.headers.get('authorization') || '',
-      },
-      body: JSON.stringify(await request.json()),
-    })
+    const user = await requireApiKeyUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
+    }
 
-    const data = await response.json()
-    
-    return NextResponse.json(data, { status: response.status })
+    const body = await request.json();
+    const website = await createWebsite(user.id, {
+      url: body.url,
+      name: body.name,
+      checkInterval: body.checkInterval || 60,
+      notificationPreference: body.notificationPreference,
+      webhookUrl: body.webhookUrl,
+      monitorType: body.monitorType,
+      crawlLimit: body.crawlLimit,
+      crawlDepth: body.crawlDepth,
+    });
+
+    if (body.monitorType === 'full_site') {
+      const { performCrawl } = await import('@/lib/services/crawl');
+      performCrawl(website.id, user.id).catch(err =>
+        console.error('Initial crawl error:', err)
+      );
+    }
+
+    return NextResponse.json({ success: true, websiteId: website.id }, { status: 201 });
   } catch (error) {
-    console.error('API error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    console.error('API error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-// Also handle GET requests to show API info
 export async function GET() {
   return NextResponse.json({
     message: 'Firecrawl Observer API',
@@ -35,6 +43,6 @@ export async function GET() {
       'POST /api/websites/pause': 'Pause or resume website monitoring',
       'DELETE /api/websites/delete': 'Delete a website from monitoring',
     },
-    docs: '/api-docs'
-  })
+    docs: '/api-docs',
+  });
 }

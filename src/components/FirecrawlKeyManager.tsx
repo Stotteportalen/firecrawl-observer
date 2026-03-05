@@ -1,47 +1,22 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Key, Trash2, Edit2, Check, AlertCircle, Coins, RefreshCw } from 'lucide-react'
-import { useMutation, useQuery, useAction } from 'convex/react'
-import { api } from '../../convex/_generated/api'
+import { useFirecrawlKey, useSetFirecrawlKey, useDeleteFirecrawlKey, useTokenUsage } from '@/hooks/use-data'
+import { mutate } from 'swr'
 
 export function FirecrawlKeyManager() {
   const [isEditing, setIsEditing] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
-  const [tokenUsage, setTokenUsage] = useState<{ remaining_tokens?: number; error?: string } | null>(null)
-  const [isLoadingTokens, setIsLoadingTokens] = useState(false)
-  
-  const firecrawlKey = useQuery(api.firecrawlKeys.getUserFirecrawlKey)
-  const setFirecrawlKey = useMutation(api.firecrawlKeys.setFirecrawlKey)
-  const deleteFirecrawlKey = useMutation(api.firecrawlKeys.deleteFirecrawlKey)
-  const getTokenUsage = useAction(api.firecrawlKeys.getTokenUsage)
-  
-  const fetchTokenUsage = useCallback(async () => {
-    setIsLoadingTokens(true)
-    try {
-      const result = await getTokenUsage()
-      if (result.success) {
-        setTokenUsage({ remaining_tokens: result.remaining_tokens })
-      } else {
-        setTokenUsage({ error: result.error })
-      }
-    } catch {
-      setTokenUsage({ error: 'Failed to fetch token usage' })
-    } finally {
-      setIsLoadingTokens(false)
-    }
-  }, [getTokenUsage])
-  
-  // Fetch token usage when component mounts and key exists
-  useEffect(() => {
-    if (firecrawlKey?.hasKey) {
-      fetchTokenUsage()
-    }
-  }, [firecrawlKey?.hasKey, fetchTokenUsage])
+
+  const { data: firecrawlKey } = useFirecrawlKey()
+  const { trigger: setFirecrawlKeyTrigger } = useSetFirecrawlKey()
+  const { trigger: deleteFirecrawlKeyTrigger } = useDeleteFirecrawlKey()
+  const { data: tokenUsageData, mutate: refreshTokenUsage } = useTokenUsage()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -49,14 +24,15 @@ export function FirecrawlKeyManager() {
     setSuccess(false)
 
     try {
-      await setFirecrawlKey({ apiKey })
+      await setFirecrawlKeyTrigger({ apiKey })
+      mutate('/api/data/firecrawl-key')
       setSuccess(true)
       setTimeout(() => {
         setIsEditing(false)
         setApiKey('')
         setSuccess(false)
-        // Fetch token usage for the new key
-        fetchTokenUsage()
+        // Refresh token usage for the new key
+        refreshTokenUsage()
       }, 1500)
     } catch (err) {
       setError((err as Error).message || 'Failed to save API key')
@@ -66,7 +42,8 @@ export function FirecrawlKeyManager() {
   const handleDelete = async () => {
     if (confirm('Are you sure you want to delete your Firecrawl Auth?')) {
       try {
-        await deleteFirecrawlKey()
+        await deleteFirecrawlKeyTrigger()
+        mutate('/api/data/firecrawl-key')
       } catch (err) {
         setError((err as Error).message || 'Failed to delete API key')
       }
@@ -106,9 +83,9 @@ export function FirecrawlKeyManager() {
             />
             <p className="mt-1 text-sm text-gray-500">
               Get your API key from{' '}
-              <a 
-                href="https://www.firecrawl.dev/app/api-keys" 
-                target="_blank" 
+              <a
+                href="https://www.firecrawl.dev/app/api-keys"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-orange-600 hover:text-orange-700 underline"
               >
@@ -116,14 +93,14 @@ export function FirecrawlKeyManager() {
               </a>
             </p>
           </div>
-          
+
           {error && (
             <div className="flex items-center gap-2 text-sm text-red-600">
               <AlertCircle className="h-4 w-4" />
               {error}
             </div>
           )}
-          
+
           <div className="flex gap-2">
             <Button type="submit" variant="orange" disabled={!apiKey}>
               {success ? (
@@ -165,22 +142,22 @@ export function FirecrawlKeyManager() {
               Last used: {new Date(firecrawlKey.lastUsed).toLocaleDateString()}
             </p>
           )}
-          
+
           {/* Token Usage Display */}
           <div className="mt-3 flex items-center gap-2">
-            {isLoadingTokens ? (
+            {!tokenUsageData ? (
               <div className="flex items-center gap-2 text-sm text-gray-500">
                 <RefreshCw className="h-4 w-4 animate-spin" />
                 Loading tokens...
               </div>
-            ) : tokenUsage?.remaining_tokens !== undefined ? (
+            ) : tokenUsageData?.remaining_tokens !== undefined ? (
               <div className="flex items-center gap-2">
                 <Coins className="h-4 w-4 text-orange-500" />
                 <span className="text-sm font-medium text-gray-700">
-                  {tokenUsage.remaining_tokens.toLocaleString()} tokens remaining
+                  {tokenUsageData.remaining_tokens.toLocaleString()} tokens remaining
                 </span>
                 <Button
-                  onClick={fetchTokenUsage}
+                  onClick={() => refreshTokenUsage()}
                   variant="outline"
                   size="sm"
                   className="h-6 w-6 p-0 border-0"
@@ -188,8 +165,8 @@ export function FirecrawlKeyManager() {
                   <RefreshCw className="h-3 w-3" />
                 </Button>
               </div>
-            ) : tokenUsage?.error ? (
-              <p className="text-xs text-red-500">{tokenUsage.error}</p>
+            ) : tokenUsageData?.error ? (
+              <p className="text-xs text-red-500">{tokenUsageData.error}</p>
             ) : null}
           </div>
         </div>

@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, useEffect, useCallback } from 'react'
-import { Github, LogOut, User, Loader2, ChevronDown, Code, BookOpen, Settings, Coins } from 'lucide-react'
+import { useState } from 'react'
+import { Github, LogOut, User, Loader2, ChevronDown, Code, BookOpen, Settings, Coins, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -12,9 +12,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useAuthActions } from "@convex-dev/auth/react"
-import { useConvexAuth, useQuery, useAction } from "convex/react"
-import { api } from "../../../convex/_generated/api"
+import { useSession, signOut } from '@/lib/auth-client'
+import { useFirecrawlKey, useTokenUsage } from '@/hooks/use-data'
 
 interface HeaderProps {
   showCTA?: boolean
@@ -23,35 +22,11 @@ interface HeaderProps {
 }
 
 export function Header({ showCTA = true, ctaText = "Use this template", ctaHref = "#" }: HeaderProps) {
-  const { isAuthenticated } = useConvexAuth()
-  const { signOut } = useAuthActions()
+  const { data: session } = useSession()
+  const isAuthenticated = !!session
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const currentUser = useQuery(api.users.getCurrentUser)
-  const firecrawlKey = useQuery(api.firecrawlKeys.getUserFirecrawlKey)
-  const getTokenUsage = useAction(api.firecrawlKeys.getTokenUsage)
-  const [tokenUsage, setTokenUsage] = useState<{ remaining_tokens?: number; error?: string } | null>(null)
-  
-  const fetchTokenUsage = useCallback(async () => {
-    try {
-      const result = await getTokenUsage()
-      if (result.success) {
-        setTokenUsage({ remaining_tokens: result.remaining_tokens })
-      } else {
-        setTokenUsage({ error: result.error })
-      }
-    } catch {
-      setTokenUsage({ error: 'Failed to fetch token usage' })
-    }
-  }, [getTokenUsage])
-  
-  useEffect(() => {
-    if (firecrawlKey?.hasKey && isAuthenticated) {
-      fetchTokenUsage()
-      // Refresh credits every 30 seconds
-      const interval = setInterval(fetchTokenUsage, 30000)
-      return () => clearInterval(interval)
-    }
-  }, [firecrawlKey?.hasKey, isAuthenticated, fetchTokenUsage])
+  useFirecrawlKey()
+  const { data: tokenUsageData } = useTokenUsage()
 
   const handleSignOut = async () => {
     setIsSigningOut(true)
@@ -70,16 +45,22 @@ export function Header({ showCTA = true, ctaText = "Use this template", ctaHref 
         <Link href="/" className="flex items-center">
           <img src="/firecrawl-logo-with-fire.webp" alt="Firecrawl" className="h-8 w-auto" />
         </Link>
-        
+
         <div className="flex items-center gap-4">
-          {isAuthenticated && tokenUsage?.remaining_tokens !== undefined && (
+          {isAuthenticated && tokenUsageData?.remaining_tokens !== undefined && (
             <div className="hidden sm:flex items-center gap-2 text-sm text-gray-600">
               <Coins className="h-4 w-4" />
-              <span>{tokenUsage.remaining_tokens.toLocaleString()} credits remaining</span>
+              <span>{tokenUsageData.remaining_tokens.toLocaleString()} credits remaining</span>
             </div>
           )}
           {isAuthenticated ? (
             <>
+              <Link href="/grants">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <FileText className="h-4 w-4" />
+                  <span className="hidden sm:inline">Grants</span>
+                </Button>
+              </Link>
               <Link href="/api-docs">
                 <Button variant="orange" size="sm" className="gap-2">
                   <Code className="h-4 w-4" />
@@ -90,7 +71,7 @@ export function Header({ showCTA = true, ctaText = "Use this template", ctaHref 
               <DropdownMenuTrigger asChild>
                 <Button variant="code" size="sm" className="gap-2">
                   <User className="h-4 w-4" />
-                  <span className="hidden sm:inline-block">{currentUser?.email || 'Account'}</span>
+                  <span className="hidden sm:inline-block">{session?.user?.email || 'Account'}</span>
                   <ChevronDown className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
@@ -99,7 +80,7 @@ export function Header({ showCTA = true, ctaText = "Use this template", ctaHref 
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none">Account</p>
                     <p className="text-xs leading-none text-zinc-500">
-                      {currentUser?.email || ''}
+                      {session?.user?.email || ''}
                     </p>
                   </div>
                 </DropdownMenuLabel>
@@ -117,7 +98,7 @@ export function Header({ showCTA = true, ctaText = "Use this template", ctaHref 
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={handleSignOut}
                   disabled={isSigningOut}
                   className="cursor-pointer"
