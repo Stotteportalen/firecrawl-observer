@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireSession, unauthorized, badRequest, serverError } from '@/lib/api-auth';
 import { extractGrantData } from '@/lib/services/grants/extraction';
 
-const MAX_IDS = 20;
+const MAX_IDS = 100;
 
 export async function POST(request: NextRequest) {
   const user = await requireSession();
@@ -19,19 +19,14 @@ export async function POST(request: NextRequest) {
       return badRequest(`Maximum ${MAX_IDS} grants per request`);
     }
 
-    const results = await Promise.allSettled(
+    // Fire and forget — extractions continue even if user navigates away
+    Promise.allSettled(
       ids.map(id => extractGrantData(id, user.id))
+    ).catch(err =>
+      console.error('Bulk extraction error:', err)
     );
 
-    const mapped = ids.map((id, i) => {
-      const result = results[i];
-      if (result.status === 'fulfilled') {
-        return { id, success: true };
-      }
-      return { id, success: false, error: result.reason?.message || 'Extraction failed' };
-    });
-
-    return NextResponse.json({ success: true, results: mapped });
+    return NextResponse.json({ success: true, message: 'Extraction started', count: ids.length });
   } catch (error) {
     console.error('POST /api/data/grants/schemes/bulk-extract error:', error);
     return serverError();

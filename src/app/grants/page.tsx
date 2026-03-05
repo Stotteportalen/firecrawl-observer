@@ -13,7 +13,7 @@ import { Loader2, Search, ExternalLink, Calendar, Building2, FileText, ArrowUpDo
 import { useSession } from '@/lib/auth-client'
 import { useGrantSchemes, useGrantProviders, useBulkExtraction } from '@/hooks/use-data'
 import { useToast } from '@/hooks/use-toast'
-import { mutate } from 'swr'
+
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-800',
@@ -71,19 +71,10 @@ export default function GrantsDashboard() {
   const handleBulkExtract = async () => {
     if (selectedIds.size === 0) return
     try {
-      const result = await bulkExtract({ ids: Array.from(selectedIds) })
-      const succeeded = result.results.filter((r: { success: boolean }) => r.success).length
-      const failed = result.results.filter((r: { success: boolean }) => !r.success).length
-      if (failed === 0) {
-        addToast({ title: `Re-extracted ${succeeded} grant${succeeded !== 1 ? 's' : ''} successfully` })
-      } else {
-        addToast({
-          title: `${succeeded} succeeded, ${failed} failed`,
-          variant: succeeded > 0 ? 'warning' : 'error',
-        })
-      }
+      await bulkExtract({ ids: Array.from(selectedIds) })
+      const count = selectedIds.size
+      addToast({ title: `Re-extraction started for ${count} grant${count !== 1 ? 's' : ''}` })
       setSelectedIds(new Set())
-      mutate((key: string) => typeof key === 'string' && key.startsWith('/api/data/grants/schemes'))
     } catch (err) {
       addToast({ title: (err as Error).message, variant: 'error' })
     }
