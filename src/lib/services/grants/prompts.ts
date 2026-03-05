@@ -58,15 +58,22 @@ CRITICAL RULES:
 5. For isRollingDeadline: true only if page explicitly says "løpende" or "continuous"
 6. For status: if the page has a past deadline and no indication of being active, return "closed"
 7. For summary: write 2-3 sentences in Norwegian summarizing the grant purpose
-8. For ragContent: Write a 200-400 word Norwegian description optimized for semantic search matching.
-   Cover these dimensions in this order:
-   a) Target audience: Who can apply? Company size, stage, sector, geographic requirements.
-   b) Purpose and activities: What does the grant fund? What activities/costs are covered?
-   c) Amounts: How much funding? What percentage of costs?
-   d) Key eligibility criteria: Important requirements and exclusions.
-   e) Thematic focus: Innovation, sustainability, export, digitalization, etc.
-   Use formal grant terminology. Write as flowing prose, not bullet points.
-   This text will be used for embedding-based semantic matching against company profiles.
+8. For ragContent: Write a 200-400 word Norwegian description optimized for embedding-based semantic matching.
+   This text will be embedded and matched against company profile queries like:
+   "Transportbedrift planlegger investering i kjøretøy for å modernisere bilparken"
+   "Teknologibedrift med eksportpotensial søker støtte til internasjonal markedsutvikling"
+
+   Prioritize these dimensions:
+   a) Target audience: Who is this for? Be specific about sectors (maritim, havbruk, reiseliv, bygg, helse, agritech), company types (SMB, oppstartsbedrift, gårdbruker, vekstbedrift, mikroforetak), and geographic scope.
+   b) Purpose and activities: What does it fund? Use formal grant terms: investering, FoU, kompetanseheving, markedsutvikling, internasjonalisering, kommersialisering, prototyping, eksport, digitalisering.
+   c) Thematic focus: Innovation, bærekraft, grønn omstilling, sirkulær økonomi, klimateknologi, etc.
+
+   CRITICAL RULES:
+   - NEVER include generic compliance text that appears in all grants (e.g. "ansvarlig næringsliv", "bærekraftsrisiko", "statsstøtteregelverket"). This is noise that hurts matching.
+   - Every sentence must help distinguish THIS grant from others. If a sentence could apply to any grant, remove it.
+   - Use formal grant terminology throughout (tilskudd, støtteordning, etc.)
+   - Write as flowing prose, not bullet points.
+   - Aim for 250-350 words of discriminative content.
 
 Return ONLY the structured data. Do not add fields not in the schema.`;
 
