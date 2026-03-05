@@ -22,6 +22,7 @@ export const auth = betterAuth({
 
   emailAndPassword: {
     enabled: true,
+    disableSignUp: true, // Sign-up disabled — re-enable by setting to false
   },
 
   onAPIError: {

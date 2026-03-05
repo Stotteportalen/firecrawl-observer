@@ -7,7 +7,7 @@ import { Hero } from '@/components/layout/hero'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Loader2, Clock, ExternalLink, LogIn, Download, X, Play, Pause, Globe, RefreshCw, Settings2, Search, ChevronLeft, ChevronRight, Maximize2, Minimize2, Bot, Eye, Zap } from 'lucide-react'
-import { signIn as authSignIn, signUp as authSignUp, useSession } from "@/lib/auth-client"
+import { signIn as authSignIn, /* signUp as authSignUp, */ useSession } from "@/lib/auth-client" // Sign-up disabled
 import { useWebsites, useCreateWebsite, useFirecrawlKey, useLatestScrapes, useAllScrapeHistory, useQuickScrape, type QuickScrapeResult } from "@/hooks/use-data"
 import { Select } from '@/components/ui/select'
 import { useRouter } from 'next/navigation'
@@ -55,11 +55,12 @@ export default function HomePage() {
   }, [isAuthenticated, authLoading])
   
   // Auth state
-  const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn')
+  // const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn') // Sign-up disabled
+  const authMode = 'signIn' as const;
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isAuthenticating, setIsAuthenticating] = useState(false)
-  const [helperText, setHelperText] = useState('')
+  // const [helperText, setHelperText] = useState('') // Sign-up disabled
   
   // Website monitoring state
   const [url, setUrl] = useState('')
@@ -175,12 +176,13 @@ export default function HomePage() {
     }
 
     try {
-      let result;
-      if (authMode === 'signUp') {
-        result = await authSignUp.email({ email: trimmedEmail, password, name: trimmedEmail.split('@')[0] })
-      } else {
-        result = await authSignIn.email({ email: trimmedEmail, password })
-      }
+      // Sign-up disabled — uncomment to re-enable (and change const back to let)
+      // let result;
+      // if (authMode === 'signUp') {
+      //   result = await authSignUp.email({ email: trimmedEmail, password, name: trimmedEmail.split('@')[0] })
+      // } else {
+      const result = await authSignIn.email({ email: trimmedEmail, password })
+      // }
 
       if (result.error) {
         throw new Error(result.error.message || result.error.code || 'Authentication failed')
@@ -189,14 +191,12 @@ export default function HomePage() {
       // Clear form on successful auth
       setEmail('')
       setPassword('')
-      setHelperText('')
+      // setHelperText('') // Sign-up disabled
       // Show success message
       addToast({
         variant: 'success',
-        title: authMode === 'signIn' ? 'Welcome Back!' : 'Account Created!',
-        description: authMode === 'signIn'
-          ? 'You have successfully signed in.'
-          : 'Your account has been created successfully.',
+        title: 'Welcome Back!',
+        description: 'You have successfully signed in.',
         duration: 3000
       })
 
@@ -229,34 +229,33 @@ export default function HomePage() {
                              errorLower.includes('credentials') ||
                              errorLower.includes('authentication failed');
       
-      if (isInvalidAccount && authMode === 'signIn') {
-        // Auto-switch to signup mode for unregistered users
-        setAuthMode('signUp')
-        setPassword('') // Clear password for security
-        setHelperText('No account found. Enter a password to create one.')
-        setIsAuthenticating(false)
-        return
-      } else if (isExistingAccount && authMode === 'signUp') {
-        setAuthMode('signIn')
-        setHelperText('Account already exists. Enter your password to sign in.')
-        setIsAuthenticating(false)
-        return
+      // Sign-up disabled — auto-switch logic commented out
+      // if (isInvalidAccount && authMode === 'signIn') {
+      //   setAuthMode('signUp')
+      //   setPassword('')
+      //   setHelperText('No account found. Enter a password to create one.')
+      //   setIsAuthenticating(false)
+      //   return
+      // } else if (isExistingAccount && authMode === 'signUp') {
+      //   setAuthMode('signIn')
+      //   setHelperText('Account already exists. Enter your password to sign in.')
+      //   setIsAuthenticating(false)
+      //   return
+      // } else
+      if (isInvalidAccount) {
+        addToast({
+          variant: 'error',
+          title: 'Sign In Failed',
+          description: 'No account found with this email. Please contact an administrator.',
+          duration: 4000
+        })
       } else if (isPasswordError) {
-        if (authMode === 'signIn') {
-          addToast({
-            variant: 'error',
-            title: 'Authentication Failed',
-            description: 'The password you entered is incorrect. Please try again.',
-            duration: 4000
-          })
-        } else {
-          addToast({
-            variant: 'error',
-            title: 'Account Creation Failed',
-            description: 'Unable to create your account. Please check your password and try again.',
-            duration: 4000
-          })
-        }
+        addToast({
+          variant: 'error',
+          title: 'Authentication Failed',
+          description: 'The password you entered is incorrect. Please try again.',
+          duration: 4000
+        })
       } else if (errorLower.includes('network') || errorLower.includes('connection')) {
         addToast({
           variant: 'error',
@@ -275,10 +274,8 @@ export default function HomePage() {
         // Generic fallback with more helpful message
         addToast({
           variant: 'error',
-          title: authMode === 'signIn' ? 'Sign In Failed' : 'Sign Up Failed',
-          description: authMode === 'signIn' 
-            ? 'Please check your email and password.' 
-            : 'Please try again or contact support.',
+          title: 'Sign In Failed',
+          description: 'Please check your email and password.',
           duration: 4000
         })
       }
@@ -410,19 +407,17 @@ export default function HomePage() {
               {/* Right side - Sign in form */}
               <div className="w-full max-w-md mx-auto lg:mx-0">
                 <div className="bg-white rounded-lg p-8 shadow-sm relative">
-                  <LoadingOverlay 
-                    visible={isAuthenticating} 
-                    message={authMode === 'signIn' ? 'Signing you in...' : 'Creating your account...'}
+                  <LoadingOverlay
+                    visible={isAuthenticating}
+                    message="Signing you in..."
                   />
                   <div className="flex items-center justify-center mb-6">
                     <h2 className="text-2xl font-semibold">
-                      {authMode === 'signIn' ? 'Welcome Back' : 'Get Started'}
+                      Welcome Back
                     </h2>
                   </div>
                   <p className="text-center text-zinc-600 mb-6">
-                    {authMode === 'signIn' 
-                      ? 'Sign in to your account to continue monitoring websites' 
-                      : 'Create an account to start monitoring website changes'}
+                    Sign in to your account to continue monitoring websites
                   </p>
                   
                   <form onSubmit={handleAuth} className="space-y-4">
@@ -437,7 +432,7 @@ export default function HomePage() {
                         value={email}
                         onChange={(e) => {
                           setEmail(e.target.value)
-                          if (helperText) setHelperText('')
+                          // if (helperText) setHelperText('') // Sign-up disabled
                         }}
                         required
                         autoComplete="email"
@@ -451,20 +446,22 @@ export default function HomePage() {
                       <Input 
                         id="password"
                         type="password" 
-                        placeholder={authMode === 'signUp' ? 'Minimum 6 characters' : '••••••••'} 
+                        placeholder="••••••••"
                         value={password}
                         onChange={(e) => {
                           setPassword(e.target.value)
-                          if (helperText) setHelperText('')
+                          // if (helperText) setHelperText('') // Sign-up disabled
                         }}
                         required
-                        autoComplete={authMode === 'signIn' ? 'current-password' : 'new-password'}
+                        autoComplete="current-password"
                       />
+                      {/* Sign-up disabled — helperText UI commented out
                       {helperText && (
                         <p className="text-sm text-gray-600 mt-1">
                           {helperText}
                         </p>
                       )}
+                      */}
                     </div>
                     
                     <Button 
@@ -476,17 +473,18 @@ export default function HomePage() {
                       {isAuthenticating ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {authMode === 'signIn' ? 'Signing in...' : 'Creating account...'}
+                          Signing in...
                         </>
                       ) : (
                         <>
                           <LogIn className="mr-2 h-4 w-4" />
-                          {authMode === 'signIn' ? 'Sign In' : 'Sign Up'}
+                          Sign In
                         </>
                       )}
                     </Button>
                   </form>
                   
+                  {/* Sign-up disabled — toggle section commented out
                   <p className="text-center text-sm text-zinc-600 mt-4">
                     {authMode === 'signIn' ? (
                       <>
@@ -518,6 +516,7 @@ export default function HomePage() {
                       </>
                     )}
                   </p>
+                  */}
                 </div>
               </div>
             </div>
