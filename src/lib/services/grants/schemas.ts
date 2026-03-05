@@ -28,7 +28,7 @@ export const GrantExtractionSchema = z.object({
   ragContent: z
     .string()
     .nullable()
-    .describe('200-400 word Norwegian description optimized for semantic search matching against company profiles'),
+    .describe('200-400 word Norwegian description optimized for embedding-based semantic matching. Sector-specific, activity-focused, no generic boilerplate.'),
 });
 
 export type GrantExtraction = z.infer<typeof GrantExtractionSchema>;
@@ -101,7 +101,7 @@ export const FIRECRAWL_GRANT_EXTRACT_SCHEMA = {
     },
     ragContent: {
       type: ['string', 'null'],
-      description: '200-400 word Norwegian description of the grant optimized for semantic search matching. Cover: target audience (who can apply — company size, stage, sector), funded activities and costs covered, funding amounts, key eligibility criteria, and sector/thematic focus. Use formal Norwegian grant terminology (tilskudd, støtteordning, innovasjon, etc). Write as continuous prose, not bullet points.',
+      description: '200-400 word Norwegian description optimized for embedding-based semantic matching against company queries. Focus on: specific sectors and company types this targets, activities funded using formal grant terms (investering, FoU, kompetanseheving, internasjonalisering), and thematic focus (innovasjon, bærekraft, grønn omstilling). NEVER include generic compliance boilerplate (ansvarlig næringsliv, bærekraftsrisiko, statsstøtteregelverket). Every sentence must distinguish this grant from others. Write as continuous prose.',
     },
   },
   required: ['name', 'providerName', 'status', 'isRollingDeadline', 'ragContent'],
