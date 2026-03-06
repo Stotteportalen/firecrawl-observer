@@ -378,3 +378,53 @@ model GrantChangeEvent {
   @@index([detectedAt])
   @@map("grant_change_events")
 }
+
+// ─── Job Queue ──────────────────────────────────────────────────
+
+enum JobType {
+  scrape
+  map
+  crawl
+  batch_scrape
+}
+
+enum JobStatus {
+  pending
+  running
+  completed
+  failed
+  cancelled
+}
+
+model JobQueue {
+  id            String    @id @default(cuid())
+  userId        String
+  type          JobType
+  status        JobStatus @default(pending)
+  priority      Int       @default(5)
+
+  // Input
+  url           String?
+  urls          Json?
+  options       Json
+
+  // Context
+  sourceType    String
+  sourceId      String?
+
+  // Output
+  result        Json?
+  error         String?
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(3)
+
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  nextRetryAt   DateTime?
+
+  @@index([status, priority, createdAt])
+  @@index([sourceType, sourceId])
+  @@map("job_queue")
+}
