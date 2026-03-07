@@ -6,7 +6,6 @@ import {
 } from './prompts';
 import { TriageResultSchema, type TriageResult } from './schemas';
 import { extractGrantData } from './extraction';
-import { scoreUrlRelevance } from './url-scoring';
 
 /**
  * Discover grant pages on a provider's domain using Firecrawl mapUrl.

@@ -5,6 +5,7 @@ import type { JobQueue } from '../types';
  * The crawl pipeline (crawl.ts) handles its own polling via checkCrawlStatus.
  * This handler is intentionally minimal.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function handleCrawlComplete(_job: JobQueue, _result: Record<string, unknown>) {
   // Crawl results are processed by crawl.ts which handles polling and page processing.
 }

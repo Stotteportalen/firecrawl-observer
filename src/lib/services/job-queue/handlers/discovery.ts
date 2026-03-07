@@ -24,7 +24,6 @@ export async function handleDiscoveryComplete(job: JobQueue, result: Record<stri
   if (isMapJob) {
     // Store all discovered URLs
     const allUrls = [...new Set(mapLinks)];
-    let newPagesCount = 0;
 
     for (const url of allUrls) {
       try {
@@ -40,7 +39,6 @@ export async function handleDiscoveryComplete(job: JobQueue, result: Record<stri
           },
           update: {},
         });
-        newPagesCount++;
       } catch (err) {
         console.error(`[DiscoveryHandler] Failed to store page ${url}:`, err);
       }
@@ -61,7 +59,7 @@ export async function handleDiscoveryComplete(job: JobQueue, result: Record<stri
       }
     } else {
       // No listings to scrape, finalize
-      await finalizeDiscovery(provider.id, allUrls.length, newPagesCount);
+      await finalizeDiscovery(provider.id, allUrls.length);
     }
   }
 }
@@ -105,11 +103,11 @@ export async function handleDiscoveryListingComplete(job: JobQueue, result: Reco
 
   if (pendingListingJobs === 0) {
     const totalPages = await db.discoveredPage.count({ where: { providerId: provider.id } });
-    await finalizeDiscovery(provider.id, totalPages, totalPages);
+    await finalizeDiscovery(provider.id, totalPages);
   }
 }
 
-async function finalizeDiscovery(providerId: string, totalUrls: number, _newPages: number) {
+async function finalizeDiscovery(providerId: string, totalUrls: number) {
   await db.grantProvider.update({
     where: { id: providerId },
     data: {
@@ -120,6 +118,7 @@ async function finalizeDiscovery(providerId: string, totalUrls: number, _newPage
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function handleDiscoveryFailure(job: JobQueue, _error: string) {
   if (!job.sourceId) return;
 
