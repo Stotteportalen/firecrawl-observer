@@ -19,14 +19,20 @@ export async function POST(request: NextRequest) {
       return badRequest(`Maximum ${MAX_IDS} grants per request`);
     }
 
-    // Fire and forget — extractions continue even if user navigates away
-    Promise.allSettled(
+    // Each extractGrantData now enqueues a job and returns immediately
+    const results = await Promise.allSettled(
       ids.map(id => extractGrantData(id, user.id))
-    ).catch(err =>
-      console.error('Bulk extraction error:', err)
     );
 
-    return NextResponse.json({ success: true, message: 'Extraction started', count: ids.length });
+    const enqueued = results.filter(r => r.status === 'fulfilled').length;
+    const failed = results.filter(r => r.status === 'rejected').length;
+
+    return NextResponse.json({
+      success: true,
+      message: `${enqueued} extraction jobs enqueued`,
+      enqueued,
+      failed,
+    });
   } catch (error) {
     console.error('POST /api/data/grants/schemes/bulk-extract error:', error);
     return serverError();

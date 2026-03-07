@@ -1,19 +1,16 @@
 import { db } from '@/lib/db';
-import { getFirecrawlClient } from '@/lib/services/firecrawl';
 import { getUserSettingsInternal } from '@/lib/services/user-settings';
 import {
-  CLASSIFICATION_SYSTEM_PROMPT,
-  buildClassificationUserPrompt,
   TRIAGE_SYSTEM_PROMPT,
   buildTriageUserPrompt,
 } from './prompts';
-import { ClassificationResultSchema, type ClassificationResult, TriageResultSchema, type TriageResult } from './schemas';
+import { TriageResultSchema, type TriageResult } from './schemas';
 import { extractGrantData } from './extraction';
 import { scoreUrlRelevance } from './url-scoring';
 
 /**
  * Discover grant pages on a provider's domain using Firecrawl mapUrl.
- * Stores all discovered URLs as DiscoveredPage records.
+ * Enqueues a map job — result processing happens in the discovery handler.
  */
 export async function discoverGrantPages(providerId: string, userId: string) {
   const provider = await db.grantProvider.findUnique({ where: { id: providerId } });
@@ -26,87 +23,28 @@ export async function discoverGrantPages(providerId: string, userId: string) {
     data: { status: 'discovering' },
   });
 
-  try {
-    const firecrawl = await getFirecrawlClient(userId);
+  const { enqueueJob } = await import('@/lib/services/job-queue');
 
-    // Use mapUrl with search filter to find grant-related pages
-    const mapResult = await firecrawl.mapUrl(provider.websiteUrl, {
+  await enqueueJob({
+    userId,
+    type: 'map',
+    url: provider.websiteUrl,
+    options: {
       search: 'tilskudd støtte grant søknad',
       includeSubdomains: true,
       limit: provider.discoveryLimit || 5000,
-    }) as unknown as { success: boolean; links?: string[]; error?: string };
+    },
+    sourceType: 'discovery',
+    sourceId: providerId,
+    priority: 5,
+  });
 
-    if (!mapResult.success || !mapResult.links) {
-      throw new Error(`mapUrl failed: ${mapResult.error || 'No links returned'}`);
-    }
-
-    const urls = mapResult.links;
-
-    // Also scrape known listing URLs to find linked grant pages
-    let listingUrls: string[] = [];
-    if (provider.knownListingUrls.length > 0) {
-      for (const listingUrl of provider.knownListingUrls) {
-        try {
-          const result = await firecrawl.scrapeUrl(listingUrl, {
-            formats: ['links' as 'markdown'],
-          }) as unknown as { success: boolean; links?: string[] };
-          if (result.success && result.links) {
-            listingUrls = [...listingUrls, ...result.links];
-          }
-        } catch (err) {
-          console.error(`Failed to scrape listing URL ${listingUrl}:`, err);
-        }
-      }
-    }
-
-    // Combine and deduplicate URLs
-    const allUrls = [...new Set([...urls, ...listingUrls])];
-
-    // Upsert discovered pages
-    let newPagesCount = 0;
-    for (const url of allUrls) {
-      try {
-        const ignored = matchesIgnorePattern(url, provider.ignorePatterns);
-        const relevanceScore = scoreUrlRelevance(url);
-        await db.discoveredPage.upsert({
-          where: {
-            providerId_url: { providerId, url },
-          },
-          create: {
-            providerId,
-            url,
-            classificationStatus: ignored ? 'confirmed_not_grant' : 'pending',
-            urlRelevanceScore: relevanceScore,
-          },
-          update: {}, // Don't overwrite existing data
-        });
-        newPagesCount++;
-      } catch (err) {
-        console.error(`Failed to store discovered page ${url}:`, err);
-      }
-    }
-
-    await db.grantProvider.update({
-      where: { id: providerId },
-      data: {
-        status: 'active',
-        lastDiscoveryAt: new Date(),
-        totalPagesFound: allUrls.length,
-      },
-    });
-
-    return { success: true, totalUrls: allUrls.length, newPages: newPagesCount };
-  } catch (error) {
-    await db.grantProvider.update({
-      where: { id: providerId },
-      data: { status: 'error' },
-    });
-    throw error;
-  }
+  return { success: true, message: 'Discovery started' };
 }
 
 /**
  * Classify discovered pages using AI to determine which are grant pages.
+ * Enqueues scrape jobs — classification happens in the classification handler.
  */
 export async function classifyDiscoveredPages(
   providerId: string,
@@ -132,119 +70,21 @@ export async function classifyDiscoveredPages(
     throw new Error('AI API key not configured. Set it in Settings.');
   }
 
-  const firecrawl = await getFirecrawlClient(userId);
-  let classified = 0;
+  const { enqueueJob } = await import('@/lib/services/job-queue');
 
   for (const page of pendingPages) {
-    try {
-      // Scrape page content
-      const scrapeResult = await firecrawl.scrapeUrl(page.url, {
-        formats: ['markdown'],
-      }) as unknown as { success: boolean; markdown?: string; metadata?: { title?: string } };
-
-      if (!scrapeResult.success || !scrapeResult.markdown) {
-        await db.discoveredPage.update({
-          where: { id: page.id },
-          data: { classificationStatus: 'classified', isGrantPage: false, classificationScore: 0, classificationReason: 'Failed to scrape' },
-        });
-        continue;
-      }
-
-      // Update title if available
-      if (scrapeResult.metadata?.title) {
-        await db.discoveredPage.update({
-          where: { id: page.id },
-          data: { title: scrapeResult.metadata.title },
-        });
-      }
-
-      // Classify with AI
-      const classification = await classifyWithAI(
-        page.url,
-        scrapeResult.markdown,
-        userSettings
-      );
-
-      if (!classification) {
-        continue;
-      }
-
-      await db.discoveredPage.update({
-        where: { id: page.id },
-        data: {
-          classificationStatus: 'classified',
-          isGrantPage: classification.isGrantPage,
-          isListingPage: classification.isListingPage,
-          classificationScore: classification.confidence,
-          classificationReason: classification.reasoning,
-          classifiedAt: new Date(),
-          title: scrapeResult.metadata?.title || (classification.grantName ?? page.title),
-        },
-      });
-
-      // If listing page, add linked grant URLs as new discovered pages
-      if (classification.isListingPage && classification.linkedGrantUrls.length > 0) {
-        for (const linkedUrl of classification.linkedGrantUrls) {
-          try {
-            await db.discoveredPage.upsert({
-              where: { providerId_url: { providerId, url: linkedUrl } },
-              create: { providerId, url: linkedUrl, classificationStatus: 'pending' },
-              update: {},
-            });
-          } catch {
-            // Ignore duplicate errors
-          }
-        }
-      }
-
-      classified++;
-    } catch (err) {
-      console.error(`Failed to classify page ${page.url}:`, err);
-    }
-  }
-
-  return { classified };
-}
-
-async function classifyWithAI(
-  url: string,
-  markdown: string,
-  userSettings: Record<string, unknown> & { aiApiKey?: string | null; aiBaseUrl?: string | null; aiModel?: string | null }
-): Promise<ClassificationResult | null> {
-  const baseUrl = (userSettings.aiBaseUrl as string) || 'https://api.openai.com/v1';
-  const apiUrl = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${userSettings.aiApiKey as string}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: userSettings.aiModel || 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: CLASSIFICATION_SYSTEM_PROMPT },
-          { role: 'user', content: buildClassificationUserPrompt(url, markdown) },
-        ],
-        temperature: 0.2,
-        max_tokens: 500,
-        response_format: { type: 'json_object' },
-      }),
+    await enqueueJob({
+      userId,
+      type: 'scrape',
+      url: page.url,
+      options: { formats: ['markdown'] },
+      sourceType: 'classification',
+      sourceId: page.id,
+      priority: 5,
     });
-
-    if (!response.ok) {
-      console.error('AI classification API error:', await response.text());
-      return null;
-    }
-
-    const data = await response.json();
-    const parsed = JSON.parse(data.choices[0].message.content);
-    return ClassificationResultSchema.parse(parsed);
-  } catch (error) {
-    console.error('AI classification error:', error);
-    return null;
   }
+
+  return { classified: pendingPages.length, message: 'Classification jobs enqueued' };
 }
 
 /**
@@ -424,6 +264,7 @@ export async function removeIgnorePattern(providerId: string, userId: string, pa
 
 /**
  * Classify a single discovered page using AI.
+ * Enqueues a scrape job — classification happens in the classification handler.
  */
 export async function classifySinglePage(pageId: string, userId: string) {
   const page = await db.discoveredPage.findUnique({
@@ -440,72 +281,19 @@ export async function classifySinglePage(pageId: string, userId: string) {
     throw new Error('AI API key not configured. Set it in Settings.');
   }
 
-  const firecrawl = await getFirecrawlClient(userId);
+  const { enqueueJob } = await import('@/lib/services/job-queue');
 
-  const scrapeResult = await firecrawl.scrapeUrl(page.url, {
-    formats: ['markdown'],
-  }) as unknown as { success: boolean; markdown?: string; metadata?: { title?: string } };
-
-  if (!scrapeResult.success || !scrapeResult.markdown) {
-    await db.discoveredPage.update({
-      where: { id: page.id },
-      data: { classificationStatus: 'classified', isGrantPage: false, classificationScore: 0, classificationReason: 'Failed to scrape' },
-    });
-    return { classified: true, isGrantPage: false, reason: 'Failed to scrape' };
-  }
-
-  if (scrapeResult.metadata?.title) {
-    await db.discoveredPage.update({
-      where: { id: page.id },
-      data: { title: scrapeResult.metadata.title },
-    });
-  }
-
-  const classification = await classifyWithAI(
-    page.url,
-    scrapeResult.markdown,
-    userSettings
-  );
-
-  if (!classification) {
-    return { classified: false, reason: 'AI classification failed' };
-  }
-
-  await db.discoveredPage.update({
-    where: { id: page.id },
-    data: {
-      classificationStatus: 'classified',
-      isGrantPage: classification.isGrantPage,
-      isListingPage: classification.isListingPage,
-      classificationScore: classification.confidence,
-      classificationReason: classification.reasoning,
-      classifiedAt: new Date(),
-      title: scrapeResult.metadata?.title || (classification.grantName ?? page.title),
-    },
+  await enqueueJob({
+    userId,
+    type: 'scrape',
+    url: page.url,
+    options: { formats: ['markdown'] },
+    sourceType: 'classification',
+    sourceId: page.id,
+    priority: 1, // User-triggered single classification
   });
 
-  // If listing page, add linked grant URLs as new discovered pages
-  if (classification.isListingPage && classification.linkedGrantUrls.length > 0) {
-    for (const linkedUrl of classification.linkedGrantUrls) {
-      try {
-        await db.discoveredPage.upsert({
-          where: { providerId_url: { providerId: page.providerId, url: linkedUrl } },
-          create: { providerId: page.providerId, url: linkedUrl, classificationStatus: 'pending', urlRelevanceScore: scoreUrlRelevance(linkedUrl) },
-          update: {},
-        });
-      } catch {
-        // Ignore duplicate errors
-      }
-    }
-  }
-
-  return {
-    classified: true,
-    isGrantPage: classification.isGrantPage,
-    isListingPage: classification.isListingPage,
-    confidence: classification.confidence,
-    reason: classification.reasoning,
-  };
+  return { classified: true, message: 'Classification job enqueued' };
 }
 
 // ─── URL Pattern Triage ──────────────────────────────────────
@@ -518,42 +306,149 @@ export interface UrlPatternGroup {
 }
 
 /**
- * Groups pending pages by their first path segment into URL patterns.
+ * Groups pending pages by URL path segments using adaptive depth.
+ * Recursively splits oversized/dominant groups until they're meaningful.
  * Skips pages already matching existing ignore patterns.
  */
 export function groupUrlsByPattern(
   pages: Array<{ id: string; url: string }>,
   existingIgnorePatterns: string[]
 ): UrlPatternGroup[] {
-  const groups = new Map<string, { urls: string[]; pageIds: string[] }>();
+  const MAX_DEPTH = 4;
+  const MAX_GROUPS = 25;
+  const SPLIT_MIN_COUNT = 20;
+  const SPLIT_DOMINANCE = 0.4;
+  const MERGE_THRESHOLD = 3;
 
+  type ParsedPage = { id: string; url: string; segments: string[] };
+
+  // Pre-parse all pages, filtering out ignored ones
+  const parsed: ParsedPage[] = [];
   for (const page of pages) {
     if (matchesIgnorePattern(page.url, existingIgnorePatterns)) continue;
-
-    let segment: string;
+    let segments: string[] = [];
     try {
-      const pathname = new URL(page.url).pathname;
-      const segments = pathname.split('/').filter(Boolean);
-      segment = segments.length > 0 ? `/${segments[0]}/*` : '/*';
+      segments = new URL(page.url).pathname.split('/').filter(Boolean);
     } catch {
-      segment = '/*';
+      // leave segments empty
+    }
+    parsed.push({ id: page.id, url: page.url, segments });
+  }
+
+  if (parsed.length === 0) return [];
+
+  // Group pages by their first N path segments
+  function groupAtDepth(
+    items: ParsedPage[],
+    depth: number
+  ): Map<string, ParsedPage[]> {
+    const groups = new Map<string, ParsedPage[]>();
+    for (const item of items) {
+      const key =
+        item.segments.length > 0
+          ? '/' + item.segments.slice(0, depth).join('/')
+          : '';
+      const list = groups.get(key);
+      if (list) list.push(item);
+      else groups.set(key, [item]);
+    }
+    return groups;
+  }
+
+  // Recursively split groups that are large AND dominant
+  function adaptiveSplit(
+    groups: Map<string, ParsedPage[]>,
+    totalCount: number,
+    currentDepth: number
+  ): Map<string, ParsedPage[]> {
+    if (currentDepth >= MAX_DEPTH) return groups;
+
+    const result = new Map<string, ParsedPage[]>();
+    let didSplit = false;
+
+    for (const [key, items] of groups) {
+      if (
+        items.length > SPLIT_MIN_COUNT &&
+        items.length / totalCount > SPLIT_DOMINANCE
+      ) {
+        // Try splitting this group one level deeper
+        const subGroups = groupAtDepth(items, currentDepth + 1);
+        if (subGroups.size > 1) {
+          didSplit = true;
+          for (const [subKey, subItems] of subGroups) {
+            result.set(subKey, subItems);
+          }
+          continue;
+        }
+      }
+      result.set(key, items);
     }
 
-    const group = groups.get(segment);
-    if (group) {
-      group.urls.push(page.url);
-      group.pageIds.push(page.id);
-    } else {
-      groups.set(segment, { urls: [page.url], pageIds: [page.id] });
+    // If we split anything, recurse to check the new groups
+    if (didSplit) {
+      return adaptiveSplit(result, totalCount, currentDepth + 1);
+    }
+    return result;
+  }
+
+  // Start at depth 1 and adaptively split
+  let groups = groupAtDepth(parsed, 1);
+  groups = adaptiveSplit(groups, parsed.length, 1);
+
+  // Merge tiny fragments (<MERGE_THRESHOLD) back under parent pattern
+  if (groups.size > MAX_GROUPS) {
+    const sorted = [...groups.entries()].sort(
+      (a, b) => b[1].length - a[1].length
+    );
+    const kept = new Map<string, ParsedPage[]>();
+    const overflow: ParsedPage[] = [];
+    for (const [key, items] of sorted) {
+      if (kept.size < MAX_GROUPS - 1) {
+        kept.set(key, items);
+      } else {
+        overflow.push(...items);
+      }
+    }
+    if (overflow.length > 0) {
+      // Group overflow by depth-1 parent
+      for (const item of overflow) {
+        const parentKey =
+          item.segments.length > 0 ? '/' + item.segments[0] : '';
+        const existing = kept.get(parentKey);
+        if (existing) existing.push(item);
+        else kept.set(parentKey, [item]);
+      }
+    }
+    groups = kept;
+  } else if (groups.size > 1) {
+    // Merge tiny groups into their depth-1 parent
+    const tiny: ParsedPage[] = [];
+    const tinyKeys: string[] = [];
+    for (const [key, items] of groups) {
+      if (items.length < MERGE_THRESHOLD) {
+        tiny.push(...items);
+        tinyKeys.push(key);
+      }
+    }
+    if (tiny.length > 0 && tinyKeys.length > 0) {
+      for (const key of tinyKeys) groups.delete(key);
+      // Re-group tiny items at depth 1
+      for (const item of tiny) {
+        const parentKey =
+          item.segments.length > 0 ? '/' + item.segments[0] : '';
+        const existing = groups.get(parentKey);
+        if (existing) existing.push(item);
+        else groups.set(parentKey, [item]);
+      }
     }
   }
 
   return Array.from(groups.entries())
-    .map(([pattern, { urls, pageIds }]) => ({
-      pattern,
-      count: urls.length,
-      examples: urls.slice(0, 3),
-      pageIds,
+    .map(([prefix, items]) => ({
+      pattern: prefix ? `${prefix}/**` : '/**',
+      count: items.length,
+      examples: items.slice(0, 3).map((p) => p.url),
+      pageIds: items.map((p) => p.id),
     }))
     .sort((a, b) => b.count - a.count);
 }
